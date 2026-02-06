@@ -48,7 +48,7 @@ class Trainer:
         self.config = config
         self.train_loader = train_loader
         self.valid_loader = valid_loader
-        self.loss_fn = loss_fn
+        self.loss_fn = loss_fn.to(device)
         self.device = device
 
         # Training parameters
