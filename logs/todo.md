@@ -37,17 +37,22 @@
 - [ ] Export submission zip from best gru_derived_v1 checkpoint (@claude-code)
 
 ### Codex Tasks (READY — assign these next)
-- [ ] Deep feature analysis notebook (02_feature_analysis.ipynb): (@codex)
+- [x] Deep feature analysis notebook (02_feature_analysis.ipynb): (@codex)
   - Analyze WHY gru_derived_v1 is best (which derived features contribute most)
   - t1 predictability analysis: autocorrelation with lag features, cross-feature interactions
   - Feature importance via permutation or gradient analysis
   - Propose next-round feature engineering (rolling stats, rate-of-change, etc.)
-- [ ] Hyperparameter optimization notebook (03_hp_optimization.ipynb): (@codex)
+- [x] Hyperparameter optimization notebook (03_hp_optimization.ipynb): (@codex)
   - Analyze training curves from all 5 experiments
   - Suggest optimal lr, dropout, batch_size ranges for sweep
   - Investigate why early stopping triggers so early (epoch 4-11)
   - Regularization analysis: would weight decay, label smoothing, or mixup help?
-- [ ] Create improved configs based on analysis (@codex)
+- [x] Create improved configs based on analysis (@codex)
+
+### New Follow-ups from Codex Analysis
+- [ ] Implement candidate temporal derived features (`spread0_roc1`, `spread0_roc5`, `trade_intensity_roll_mean_5`) with config flags in `src/data/preprocessing.py` (@claude-code)
+- [ ] Run new GRU+derived configs: `gru_derived_reg_v2.yaml`, `gru_derived_tightwd_v2.yaml`, `gru_derived_onecycle_v2.yaml` (@user on Kaggle)
+- [ ] Persist per-epoch train/val history (loss + t0/t1/avg scores) for future curve diagnostics (@claude-code)
 
 ## Phase 3 — Architecture Exploration
 

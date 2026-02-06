@@ -40,8 +40,9 @@ def generate_solution_py(config: dict) -> str:
     dropout = model_cfg.get('dropout', 0.2)
     output_size = model_cfg.get('output_size', 2)
     derived_features = data_cfg.get('derived_features', False)
+    temporal_features = data_cfg.get('temporal_features', False) and derived_features
 
-    # Shared preamble: imports, derived features, normalizer
+    # Shared preamble: imports, derived features, temporal buffer, normalizer
     preamble = textwrap.dedent(f'''\
         import numpy as np
         import torch
@@ -51,6 +52,7 @@ def generate_solution_py(config: dict) -> str:
         # ── Derived feature computation ──────────────────────────────────
 
         USE_DERIVED_FEATURES = {derived_features}
+        USE_TEMPORAL_FEATURES = {temporal_features}
 
         def compute_derived(features, eps=1e-8):
             """Compute 10 derived features from raw 32-feature vector."""
@@ -60,6 +62,30 @@ def generate_solution_py(config: dict) -> str:
             ask_pressure = features[18:24].sum(keepdims=True)
             pressure_imbalance = (bid_pressure - ask_pressure) / (bid_pressure + ask_pressure + eps)
             return np.concatenate([spreads, trade_intensity, bid_pressure, ask_pressure, pressure_imbalance]).astype(np.float32)
+
+
+        # ── Temporal feature buffer ──────────────────────────────────────
+
+        class TemporalBuffer:
+            def __init__(self):
+                self.reset()
+
+            def reset(self):
+                self.step = 0
+                self.spread0_history = []
+                self.trade_int_history = []
+
+            def compute_step(self, features_42):
+                spread_0 = float(features_42[32])
+                trade_int = float(features_42[38])
+                self.spread0_history.append(spread_0)
+                self.trade_int_history.append(trade_int)
+                roc1 = spread_0 - self.spread0_history[-2] if self.step >= 1 else 0.0
+                roc5 = spread_0 - self.spread0_history[-6] if self.step >= 5 else 0.0
+                window = self.trade_int_history[-5:]
+                roll_mean = sum(window) / len(window)
+                self.step += 1
+                return np.concatenate([features_42, np.array([roc1, roc5, roll_mean], dtype=np.float32)]).astype(np.float32)
 
 
         # ── Normalizer ───────────────────────────────────────────────────
@@ -189,18 +215,23 @@ def generate_solution_py(config: dict) -> str:
                 # State
                 self.current_seq_ix = None
                 self.hidden = None
+                self.temporal_buffer = TemporalBuffer() if USE_TEMPORAL_FEATURES else None
 
             def predict(self, data_point) -> np.ndarray:
                 # Reset hidden on new sequence
                 if self.current_seq_ix != data_point.seq_ix:
                     self.current_seq_ix = data_point.seq_ix
                     self.hidden = None
+                    if self.temporal_buffer is not None:
+                        self.temporal_buffer.reset()
 
                 # Build features
                 raw = data_point.state.astype(np.float32)
                 if USE_DERIVED_FEATURES:
                     derived = compute_derived(raw)
                     raw = np.concatenate([raw, derived])
+                if USE_TEMPORAL_FEATURES:
+                    raw = self.temporal_buffer.compute_step(raw)
                 features = self.normalizer.transform(raw.reshape(1, -1)).squeeze(0)
                 x = torch.from_numpy(features)
 

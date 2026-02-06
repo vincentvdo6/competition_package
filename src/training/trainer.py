@@ -241,6 +241,7 @@ class Trainer:
         print(f"Best score: {self.best_score:.4f} at epoch {self.best_epoch}")
 
         self._log_experiment(history)
+        self._save_history(history)
 
         return history
 
@@ -286,3 +287,17 @@ class Trainer:
             f.write(json.dumps(entry) + '\n')
 
         print(f"Experiment logged to {self.experiment_log}")
+
+    def _save_history(self, history: Dict) -> None:
+        """Save per-epoch training history to JSON for curve diagnostics."""
+        history_path = os.path.join(self.log_dir, 'training_history.json')
+        serializable = {
+            'train_loss': history['train_loss'],
+            'val_scores': history['val_scores'],
+            'learning_rates': history['learning_rates'],
+            'best_score': self.best_score,
+            'best_epoch': self.best_epoch,
+        }
+        with open(history_path, 'w') as f:
+            json.dump(serializable, f, indent=2)
+        print(f"Training history saved to {history_path}")

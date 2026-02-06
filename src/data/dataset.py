@@ -10,7 +10,7 @@ import pandas as pd
 import numpy as np
 from typing import Tuple, Dict, Optional, List
 
-from .preprocessing import Normalizer, DerivedFeatureBuilder
+from .preprocessing import Normalizer, DerivedFeatureBuilder, TemporalDerivedFeatureBuilder
 
 
 class LOBSequenceDataset(Dataset):
@@ -34,16 +34,18 @@ class LOBSequenceDataset(Dataset):
         normalize: bool = True,
         normalizer: Optional[Normalizer] = None,
         derived_features: bool = False,
+        temporal_features: bool = False,
     ):
         self.derived_features = derived_features
+        self.temporal_features = temporal_features and derived_features  # temporal requires derived
         self.df = pd.read_parquet(parquet_path)
         self.seq_ids = np.sort(self.df['seq_ix'].unique())
         n_seqs = len(self.seq_ids)
 
-        n_features = 32 + (DerivedFeatureBuilder.N_DERIVED if derived_features else 0)
+        n_base = 32 + (DerivedFeatureBuilder.N_DERIVED if derived_features else 0)
 
-        # Pre-allocate contiguous arrays for all sequences
-        features_all = np.empty((n_seqs, 1000, n_features), dtype=np.float32)
+        # Pre-allocate contiguous arrays for all sequences (base features first)
+        features_all = np.empty((n_seqs, 1000, n_base), dtype=np.float32)
         targets_all = np.empty((n_seqs, 1000, 2), dtype=np.float32)
         masks_all = np.empty((n_seqs, 1000), dtype=np.bool_)
 
@@ -62,7 +64,14 @@ class LOBSequenceDataset(Dataset):
             targets_all[idx] = group[self.TARGET_COLS].values
             masks_all[idx] = group['need_prediction'].values
 
-        # Handle normalization (over all features including derived)
+        # Compute temporal features BEFORE normalization (on raw derived values)
+        if self.temporal_features:
+            temporal = TemporalDerivedFeatureBuilder.compute_batch(features_all)
+            features_all = np.concatenate([features_all, temporal], axis=-1)
+
+        n_features = features_all.shape[-1]
+
+        # Handle normalization (over all features including derived + temporal)
         self.normalizer = normalizer
         if normalize:
             if normalizer is None:
@@ -99,6 +108,7 @@ def create_dataloaders(
     normalize: bool = True,
     pin_memory: bool = False,
     derived_features: bool = False,
+    temporal_features: bool = False,
 ) -> Tuple[DataLoader, DataLoader, Optional[Normalizer]]:
     """Create train and validation dataloaders with shared normalizer.
 
@@ -107,7 +117,8 @@ def create_dataloaders(
     Set pin_memory=True when using GPU for faster CPU->GPU transfers.
     """
     train_dataset = LOBSequenceDataset(
-        train_path, normalize=normalize, derived_features=derived_features
+        train_path, normalize=normalize, derived_features=derived_features,
+        temporal_features=temporal_features,
     )
 
     valid_dataset = LOBSequenceDataset(
@@ -115,6 +126,7 @@ def create_dataloaders(
         normalize=normalize,
         normalizer=train_dataset.normalizer if normalize else None,
         derived_features=derived_features,
+        temporal_features=temporal_features,
     )
 
     train_loader = DataLoader(

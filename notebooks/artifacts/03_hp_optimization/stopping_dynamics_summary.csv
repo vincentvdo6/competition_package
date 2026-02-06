@@ -1,0 +1,6 @@
+config,val_score_avg,best_epoch,epochs_trained,overfit_tail_epochs,overfit_tail_ratio,lr,dropout,batch_size,weight_decay,hidden_size,num_layers,model_type
+configs/gru_derived_v1.yaml,0.2614,7.0,17.0,10.0,0.5882352941176471,0.001,0.2,256,1e-05,128,2,gru
+configs/gru_long_memory_derived_v1.yaml,0.2609,4.0,14.0,10.0,0.7142857142857143,0.0008,0.15,192,2e-05,192,3,gru
+configs/gru_baseline.yaml,0.2578,8.0,18.0,10.0,0.5555555555555556,0.001,0.2,256,1e-05,128,2,gru
+configs/lstm_derived_v1.yaml,0.2542,11.0,,,,0.001,0.2,256,1e-05,128,2,lstm
+configs/gru_derived_t1focus_v1.yaml,0.2536,9.0,,,,0.001,0.2,256,1e-05,128,2,gru

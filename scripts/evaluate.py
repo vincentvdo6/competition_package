@@ -15,7 +15,7 @@ sys.path.insert(0, ROOT)
 from utils import DataPoint, ScorerStepByStep
 from src.models.gru_baseline import GRUBaseline
 from src.models.lstm_model import LSTMModel
-from src.data.preprocessing import Normalizer, DerivedFeatureBuilder
+from src.data.preprocessing import Normalizer, DerivedFeatureBuilder, TemporalBuffer
 
 
 class PyTorchPredictionModel:
@@ -47,8 +47,9 @@ class PyTorchPredictionModel:
         # Determine device
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        # Check if model uses derived features
+        # Check if model uses derived/temporal features
         self.derived_features = self.config.get('data', {}).get('derived_features', False)
+        self.temporal_features = self.config.get('data', {}).get('temporal_features', False) and self.derived_features
 
         # Load model
         model_type = self.config.get('model', {}).get('type', 'gru')
@@ -63,12 +64,15 @@ class PyTorchPredictionModel:
 
         print(f"Loaded model from {checkpoint_path}")
         print(f"Best score from training: {checkpoint.get('best_score', 'N/A')}")
-        if self.derived_features:
+        if self.temporal_features:
+            print("Derived + Temporal features: ENABLED (45 input features)")
+        elif self.derived_features:
             print("Derived features: ENABLED (42 input features)")
 
         # State management for online inference
         self.current_seq_ix = None
         self.hidden = None
+        self.temporal_buffer = TemporalBuffer() if self.temporal_features else None
 
     def predict(self, data_point: DataPoint) -> np.ndarray:
         """Make prediction matching competition interface.
@@ -84,12 +88,16 @@ class PyTorchPredictionModel:
         if self.current_seq_ix != data_point.seq_ix:
             self.current_seq_ix = data_point.seq_ix
             self.hidden = None
+            if self.temporal_buffer is not None:
+                self.temporal_buffer.reset()
 
         # Compute derived features if needed, then normalize
         raw = data_point.state.reshape(1, -1).astype(np.float32)
         if self.derived_features:
             derived = DerivedFeatureBuilder.compute(raw)
             raw = np.concatenate([raw, derived], axis=-1)
+        if self.temporal_features:
+            raw = self.temporal_buffer.compute_step(raw.squeeze(0)).reshape(1, -1)
         features = self.normalizer.transform(raw)
         x = torch.from_numpy(features).to(self.device)
 

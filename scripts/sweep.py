@@ -139,6 +139,7 @@ def run_single(config: dict, run_name: str, device: str) -> dict:
         normalize=data_cfg.get('normalize', True),
         pin_memory=dev.type == 'cuda',
         derived_features=data_cfg.get('derived_features', False),
+        temporal_features=data_cfg.get('temporal_features', False),
     )
 
     # Model, loss, trainer

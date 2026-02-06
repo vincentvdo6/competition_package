@@ -67,10 +67,13 @@ def main():
     batch_size = int(config.get('training', {}).get('batch_size', 32))
     normalize = data_cfg.get('normalize', True)
     derived_features = data_cfg.get('derived_features', False)
+    temporal_features = data_cfg.get('temporal_features', False)
     use_gpu = device.type == 'cuda'
 
     print(f"Loading data from {train_path} and {valid_path}...")
-    if derived_features:
+    if derived_features and temporal_features:
+        print("Derived features ENABLED + Temporal features ENABLED (45 total = 32 raw + 10 derived + 3 temporal)")
+    elif derived_features:
         print("Derived features ENABLED (42 total = 32 raw + 10 derived)")
     train_loader, valid_loader, normalizer = create_dataloaders(
         train_path=train_path,
@@ -79,6 +82,7 @@ def main():
         normalize=normalize,
         pin_memory=use_gpu,
         derived_features=derived_features,
+        temporal_features=temporal_features,
     )
     print(f"Train batches: {len(train_loader)}, Valid batches: {len(valid_loader)}")
 

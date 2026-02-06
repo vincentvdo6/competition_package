@@ -1,0 +1,78 @@
+{
+  "n_runs_analyzed": 5,
+  "best_config": "configs/gru_derived_v1.yaml",
+  "best_val_avg": 0.2614,
+  "early_stopping_epoch_range": [
+    4,
+    11
+  ],
+  "early_peak_configs": [
+    "configs/gru_derived_v1.yaml",
+    "configs/gru_long_memory_derived_v1.yaml",
+    "configs/gru_baseline.yaml",
+    "configs/lstm_derived_v1.yaml",
+    "configs/gru_derived_t1focus_v1.yaml"
+  ],
+  "recommended_ranges": {
+    "lr": {
+      "recommended_range": [
+        0.0007,
+        0.0015
+      ],
+      "grid_hint": [
+        0.0006,
+        0.0008,
+        0.001,
+        0.0012,
+        0.0015
+      ]
+    },
+    "dropout": {
+      "recommended_range": [
+        0.15000000000000002,
+        0.28
+      ],
+      "grid_hint": [
+        0.15,
+        0.2,
+        0.24,
+        0.28
+      ]
+    },
+    "batch_size": {
+      "recommended_range": [
+        128,
+        320
+      ],
+      "grid_hint": [
+        160,
+        192,
+        224,
+        256,
+        320
+      ]
+    },
+    "weight_decay": {
+      "recommended_range": [
+        1e-05,
+        8e-05
+      ],
+      "grid_hint": [
+        1e-05,
+        2e-05,
+        4e-05,
+        6e-05,
+        8e-05
+      ]
+    },
+    "epochs": {
+      "recommended_max": 35,
+      "best_epoch_observed_range": [
+        4,
+        11
+      ],
+      "note": "Keep early stopping; most value appears by epochs 4-11."
+    }
+  },
+  "curve_data_note": "Per-epoch train/val curves are not persisted in logs/experiments.jsonl or checkpoints for the 5 runs. Analysis therefore uses best_epoch, epochs_trained, and score outcomes as curve proxies. For future sweeps, persist per-epoch history to enable exact curve diagnostics."
+}

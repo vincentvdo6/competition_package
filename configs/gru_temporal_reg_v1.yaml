@@ -1,0 +1,42 @@
+# GRU with derived + temporal features + regularization (Codex-inspired)
+# Combines temporal features with the regularized config from Codex analysis.
+# input_size: 45 = 32 raw + 10 derived + 3 temporal
+
+model:
+  type: gru
+  input_size: 45
+  hidden_size: 128
+  num_layers: 2
+  dropout: 0.24
+  output_size: 2
+
+training:
+  lr: 0.0009
+  weight_decay: 4e-5
+  epochs: 35
+  batch_size: 224
+  gradient_clip: 1.0
+  early_stopping_patience: 8
+  loss: combined
+  weighted_ratio: 0.6
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.6
+    patience: 3
+    min_lr: 1e-6
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: true
+  derived_features: true
+  temporal_features: true
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5

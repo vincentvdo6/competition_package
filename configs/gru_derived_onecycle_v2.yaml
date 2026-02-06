@@ -1,0 +1,38 @@
+# GRU derived v2 (one-cycle exploration)
+# Hypothesis: a controlled OneCycle schedule improves convergence inside the short 4-11 epoch sweet spot.
+
+model:
+  type: gru
+  input_size: 42
+  hidden_size: 128
+  num_layers: 2
+  dropout: 0.2
+  output_size: 2
+
+training:
+  lr: 0.00035
+  weight_decay: 2e-5
+  epochs: 28
+  batch_size: 256
+  gradient_clip: 1.0
+  early_stopping_patience: 7
+  loss: combined
+  weighted_ratio: 0.58
+  use_amp: true
+  scheduler:
+    type: one_cycle
+
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: true
+  derived_features: true
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5

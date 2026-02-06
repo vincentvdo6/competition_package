@@ -1,0 +1,1 @@
+Per-epoch train/val curves are not persisted in logs/experiments.jsonl or checkpoints for the 5 runs. Analysis therefore uses best_epoch, epochs_trained, and score outcomes as curve proxies. For future sweeps, persist per-epoch history to enable exact curve diagnostics.

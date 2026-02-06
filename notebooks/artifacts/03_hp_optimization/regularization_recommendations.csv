@@ -1,0 +1,6 @@
+technique,recommendation,reason
+label_smoothing,Not recommended as primary method,This is continuous regression; label smoothing is mainly classification-oriented and can damp useful amplitude signal.
+mixup_sequence,Use cautiously (low priority),Can regularize but may distort temporal microstructure; only consider sequence-level mixup with low alpha and strict validation checks.
+feature_dropout,Recommended,Likely robust to train-valid feature shift; try random masking/noise on input channels during training (small probability).
+higher_weight_decay,Recommended,Fast early peaks indicate overfitting; moderate weight decay increases post-peak robustness.
+dropout_tuning,Recommended,Current best uses 0.2; moderate increases (0.22-0.28) may reduce overfit without hurting fit speed.

@@ -133,3 +133,27 @@
 6. **Would a Transformer (causal attention) capture different patterns than RNN?**
 
 **Action**: Run hyperparameter sweeps on gru_derived_v1 (lr, dropout, batch_size). Codex to do deep feature analysis + suggest next feature engineering round.
+
+## [2026-02-06] Feature Analysis: Derived Feature Importance + t1 Deep Dive
+**Source**: notebooks/02_feature_analysis.ipynb, notebooks/artifacts/02_feature_analysis/*
+**Result**:
+- Among current derived features, the strongest contributors are `spread_2`, `trade_intensity`, `spread_0`, and `ask_pressure`.
+- Permutation importance (derived-only proxy model) shows largest avg score drops for `spread_2` (0.0289), `trade_intensity` (0.0235), and `spread_0` (0.0148).
+- `t1` remains weakly linear overall, but the best stable signals are `spread_0` (valid corr 0.0397), `trade_intensity` (0.0285), `v8` (0.0282), and `dv3` (0.0279).
+- Cross-feature interactions add signal for `t1` (`v8*p0`, `spread_0*p0`, `spread_0*v2` were top interaction terms).
+- Candidate next-round temporal features show promise for `t1`: `spread0_roc1` (valid corr 0.0521), `spread0_roc5` (0.0366), and `trade_intensity_roll_mean_5` (0.0243).
+**Action**: Add the top temporal derivative features (`spread0_roc1`, `spread0_roc5`, `trade_intensity_roll_mean_5`) as optional engineered channels in `src/data/preprocessing.py` behind config flags, then run ablation against current 42-feature baseline.
+
+## [2026-02-06] HP Optimization Analysis: Early Peak Behavior + Sweep Ranges
+**Source**: notebooks/03_hp_optimization.ipynb, notebooks/artifacts/03_hp_optimization/*
+**Result**:
+- Best config remains `gru_derived_v1` at val avg 0.2614.
+- Across the 5 key experiments, best epochs are consistently early (range 4-11), indicating fast fit + early overfit rather than undertraining.
+- No per-epoch curve files were persisted for these runs; analysis used `best_epoch`, `epochs_trained`, and score outcomes as curve proxies.
+- Recommended sweep ranges from observed outcomes:
+  - `lr`: 0.0007 to 0.0015
+  - `dropout`: 0.15 to 0.28
+  - `batch_size`: 128 to 320
+  - `weight_decay`: 1e-5 to 8e-5
+- Regularization readout: feature dropout and moderately higher weight decay are promising; label smoothing is not a primary fit for this regression objective.
+**Action**: Run focused GRU+derived sweeps in the recommended ranges and persist per-epoch history in future runs to enable exact curve diagnostics.
