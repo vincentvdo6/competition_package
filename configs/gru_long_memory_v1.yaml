@@ -1,0 +1,39 @@
+# GRU long-memory experiment (EDA-driven)
+# Goal: exploit strong target autocorrelation, especially t1
+
+model:
+  type: gru
+  input_size: 32
+  hidden_size: 192
+  num_layers: 3
+  dropout: 0.15
+  output_size: 2
+
+training:
+  lr: 0.0008
+  weight_decay: 2e-5
+  epochs: 60
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 12
+  loss: combined
+  weighted_ratio: 0.6
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 5
+    min_lr: 1e-6
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: true
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5

@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Environment
+venv/
+.venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Logs & Checkpoints
+logs/*.pt
+logs/*.ckpt
+logs/*.npz
+*.onnx
+!example_solution/baseline.onnx
+
+# Model weights & submission zips (anywhere in repo)
+*.pt
+*.npz
+*.zip
+submissions/
+
+# Large data files
+datasets/
+!datasets/.gitkeep
+
+# Claude settings
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Jupyter
+.ipynb_checkpoints/

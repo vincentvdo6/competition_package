@@ -1,0 +1,22 @@
+# Core ML
+torch>=2.0.0
+numpy>=1.24.0
+pandas>=2.0.0
+pyarrow>=12.0.0
+
+# Training utilities
+tqdm>=4.65.0
+pyyaml>=6.0
+tensorboard>=2.13.0
+
+# Evaluation
+scikit-learn>=1.2.0
+
+# ONNX export (for final submission)
+onnx>=1.14.0
+onnxruntime>=1.15.0
+
+# Notebook support
+jupyter>=1.0.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
