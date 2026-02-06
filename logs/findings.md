@@ -81,3 +81,55 @@
 **Source**: notebooks/01_eda.ipynb, notebooks/artifacts/01_eda/derived_feature_target_corr.csv
 **Result**: Weighted metric is concentrated: top 20% of |target| contributes ~50-56% of total weight; derived spreads improve `t0` linear signal (`spread_2` corr=0.145 > best raw 0.136), while `t1` gains are modest.
 **Action**: Implement optional derived spread/trade-intensity channels and run weighted-loss sweeps emphasizing high-|target| samples, with separate monitoring for `t0`/`t1`.
+
+---
+
+## [2026-02-06] Phase 2 Experiment Results — Architecture & Config Comparison
+
+**Source**: Kaggle training (Tesla T4 GPU), 5 configs tested
+
+### Full Results Table
+
+| Config | Val Avg | t0 | t1 | Best Epoch | Params | Notes |
+|--------|---------|------|------|------------|--------|-------|
+| gru_baseline | 0.2578 | 0.3869 | 0.1286 | 8 | 211K | Original baseline |
+| **gru_derived_v1** | **0.2614** | **0.3912** | **0.1316** | 7 | 212K | **BEST — derived features help** |
+| gru_derived_t1focus_v1 | 0.2536 | 0.3854 | 0.1218 | 9 | 212K | target_weights [0.35, 0.65] HURT |
+| gru_long_memory_derived_v1 | 0.2609 | 0.3869 | 0.1348 | 4 | 694K | Big model overfits fast |
+| lstm_derived_v1 | 0.2542 | 0.3836 | 0.1247 | 11 | 278K | LSTM underperforms GRU |
+
+### Key Findings
+
+1. **Derived features provide a small but real improvement** (+0.0036 avg over baseline). The 10 extra features (spreads, trade_intensity, bid/ask pressure, pressure_imbalance) add signal without overfitting. This is the ONLY config that improved over baseline.
+
+2. **Target-specific loss weights HURT performance**. `gru_derived_t1focus_v1` used `target_weights: [0.35, 0.65]` to emphasize t1, but BOTH targets got worse (t0: 0.3854 vs 0.3912, t1: 0.1218 vs 0.1316). The equal-weight CombinedLoss is better.
+
+3. **Bigger models overfit faster without improving**. `gru_long_memory_derived_v1` (694K params, hidden=192, 3 layers) peaked at epoch 4 with 0.2609 avg — worse than the smaller 212K model. More capacity ≠ better generalization on this data.
+
+4. **LSTM underperforms GRU** despite theoretical advantage of cell state for long-range memory. 0.2542 avg is worse than both GRU configs. The forget-gate mechanism doesn't help on these LOB sequences.
+
+5. **t1 remains the bottleneck**. Best t1 score is 0.1348 (from the big GRU) but that model has worse avg. The 0.1316 from gru_derived_v1 is the best t1 from a competitive model. The ~3x gap between t0 and t1 persists across all architectures.
+
+6. **Early stopping triggers early** (epochs 4-11 across configs). Models learn quickly but overfit quickly too. The short optimal training window suggests strong regularization is key.
+
+### What Didn't Work
+- Per-target loss weighting (any ratio other than equal)
+- More layers (3 vs 2)
+- More hidden units (192 vs 128)
+- LSTM architecture
+
+### What Worked
+- Derived features (+0.0036 avg)
+- Equal-weight CombinedLoss (MSE + WeightedMSE at 0.5/0.5)
+- Moderate model size (2 layers, hidden=128, 212K params)
+- Aggressive early stopping
+
+### Open Questions for Next Round
+1. **Would a learning rate sweep improve gru_derived_v1 further?** Current lr=0.001, try 0.0005-0.003 range
+2. **Does dropout tuning matter?** Current 0.2, try 0.1-0.4
+3. **Are there better derived features?** Current 10 are basic. Rolling statistics, rate-of-change features?
+4. **Would sequence-level augmentation help?** (e.g., add noise, feature dropout)
+5. **Is t1 predictable at all or is it noise?** Need correlation analysis of t1 with lag features
+6. **Would a Transformer (causal attention) capture different patterns than RNN?**
+
+**Action**: Run hyperparameter sweeps on gru_derived_v1 (lr, dropout, batch_size). Codex to do deep feature analysis + suggest next feature engineering round.
