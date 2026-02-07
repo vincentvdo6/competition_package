@@ -14,6 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from src.data.dataset import create_dataloaders
+from src.models.gru_attention import GRUAttentionModel
 from src.models.gru_baseline import GRUBaseline
 from src.models.lstm_model import LSTMModel
 from src.training.trainer import Trainer, setup_cpu_performance
@@ -42,6 +43,8 @@ def get_model(config: dict) -> torch.nn.Module:
 
     if model_type == 'gru':
         return GRUBaseline(config)
+    elif model_type == 'gru_attention':
+        return GRUAttentionModel(config)
     elif model_type == 'lstm':
         return LSTMModel(config)
     else:
@@ -92,13 +95,21 @@ def main():
     normalize = data_cfg.get('normalize', True)
     derived_features = data_cfg.get('derived_features', False)
     temporal_features = data_cfg.get('temporal_features', False)
+    interaction_features = data_cfg.get('interaction_features', False)
     use_gpu = device.type == 'cuda'
 
     print(f"Loading data from {train_path} and {valid_path}...")
-    if derived_features and temporal_features:
-        print("Derived features ENABLED + Temporal features ENABLED (45 total = 32 raw + 10 derived + 3 temporal)")
-    elif derived_features:
-        print("Derived features ENABLED (42 total = 32 raw + 10 derived)")
+    feature_dim = 32
+    if derived_features:
+        feature_dim += 10
+    if temporal_features and derived_features:
+        feature_dim += 3
+    if interaction_features:
+        feature_dim += 3
+    print(
+        f"Feature pipeline: derived={derived_features}, temporal={temporal_features}, "
+        f"interaction={interaction_features} -> input_size={feature_dim}"
+    )
     train_loader, valid_loader, normalizer = create_dataloaders(
         train_path=train_path,
         valid_path=valid_path,
@@ -107,6 +118,7 @@ def main():
         pin_memory=use_gpu,
         derived_features=derived_features,
         temporal_features=temporal_features,
+        interaction_features=interaction_features,
     )
     print(f"Train batches: {len(train_loader)}, Valid batches: {len(valid_loader)}")
 
@@ -114,9 +126,15 @@ def main():
     log_dir = config.get('logging', {}).get('log_dir', 'logs')
     os.makedirs(log_dir, exist_ok=True)
     if normalizer is not None:
-        normalizer_path = os.path.join(log_dir, 'normalizer.npz')
-        normalizer.save(normalizer_path)
-        print(f"Saved normalizer to {normalizer_path}")
+        # Seed-safe path for reproducibility, plus legacy path for compatibility.
+        normalizer_seed_name = f"normalizer_{run_name}.npz"
+        normalizer_seed_path = os.path.join(log_dir, normalizer_seed_name)
+        normalizer_legacy_path = os.path.join(log_dir, 'normalizer.npz')
+        normalizer.save(normalizer_seed_path)
+        normalizer.save(normalizer_legacy_path)
+        config.setdefault('logging', {})['normalizer_path'] = normalizer_seed_name
+        print(f"Saved normalizer to {normalizer_seed_path}")
+        print(f"Updated compatibility normalizer at {normalizer_legacy_path}")
 
     # Create model
     model = get_model(config)

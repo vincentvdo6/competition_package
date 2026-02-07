@@ -13,9 +13,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from utils import DataPoint, ScorerStepByStep
+from src.models.gru_attention import GRUAttentionModel
 from src.models.gru_baseline import GRUBaseline
 from src.models.lstm_model import LSTMModel
-from src.data.preprocessing import Normalizer, DerivedFeatureBuilder, TemporalBuffer
+from src.data.preprocessing import (
+    DerivedFeatureBuilder,
+    InteractionFeatureBuilder,
+    Normalizer,
+    TemporalBuffer,
+)
 
 
 class PyTorchPredictionModel:
@@ -49,12 +55,18 @@ class PyTorchPredictionModel:
 
         # Check if model uses derived/temporal features
         self.derived_features = self.config.get('data', {}).get('derived_features', False)
-        self.temporal_features = self.config.get('data', {}).get('temporal_features', False) and self.derived_features
+        self.temporal_features = (
+            self.config.get('data', {}).get('temporal_features', False)
+            and self.derived_features
+        )
+        self.interaction_features = self.config.get('data', {}).get('interaction_features', False)
 
         # Load model
         model_type = self.config.get('model', {}).get('type', 'gru')
         if model_type == 'lstm':
             self.model = LSTMModel(self.config)
+        elif model_type == 'gru_attention':
+            self.model = GRUAttentionModel(self.config)
         else:
             self.model = GRUBaseline(self.config)
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
@@ -64,10 +76,18 @@ class PyTorchPredictionModel:
 
         print(f"Loaded model from {checkpoint_path}")
         print(f"Best score from training: {checkpoint.get('best_score', 'N/A')}")
+        feature_dim = 32
+        if self.derived_features:
+            feature_dim += 10
         if self.temporal_features:
-            print("Derived + Temporal features: ENABLED (45 input features)")
-        elif self.derived_features:
-            print("Derived features: ENABLED (42 input features)")
+            feature_dim += 3
+        if self.interaction_features:
+            feature_dim += 3
+        print(
+            "Feature pipeline: "
+            f"derived={self.derived_features}, temporal={self.temporal_features}, "
+            f"interaction={self.interaction_features} -> input_size={feature_dim}"
+        )
 
         # State management for online inference
         self.current_seq_ix = None
@@ -91,13 +111,19 @@ class PyTorchPredictionModel:
             if self.temporal_buffer is not None:
                 self.temporal_buffer.reset()
 
-        # Compute derived features if needed, then normalize
+        # Compute features using the same order as training:
+        # raw -> derived -> temporal -> interaction
         raw = data_point.state.reshape(1, -1).astype(np.float32)
         if self.derived_features:
             derived = DerivedFeatureBuilder.compute(raw)
             raw = np.concatenate([raw, derived], axis=-1)
         if self.temporal_features:
             raw = self.temporal_buffer.compute_step(raw.squeeze(0)).reshape(1, -1)
+        if self.interaction_features:
+            interactions = InteractionFeatureBuilder.compute(
+                raw, has_derived=self.derived_features
+            )
+            raw = np.concatenate([raw, interactions], axis=-1)
         features = self.normalizer.transform(raw)
         x = torch.from_numpy(features).to(self.device)
 

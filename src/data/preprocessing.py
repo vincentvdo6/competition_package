@@ -1,56 +1,43 @@
 """Preprocessing utilities for LOB sequence data."""
 
-import numpy as np
 from typing import Optional
+
+import numpy as np
 
 
 class DerivedFeatureBuilder:
-    """Compute derived LOB features from raw 32-feature data.
-
-    Adds 10 derived features:
-    - spread_0..spread_5: ask_price_i - bid_price_i (6)
-    - trade_intensity: sum of trade volumes dv0..dv3 (1)
-    - bid_pressure: sum of bid volumes v0..v5 (1)
-    - ask_pressure: sum of ask volumes v6..v11 (1)
-    - pressure_imbalance: (bid - ask) / (bid + ask + eps) (1)
-    """
+    """Compute static derived LOB features from the raw 32-feature vector."""
 
     N_DERIVED = 10
     DERIVED_COLS = [
-        'spread_0', 'spread_1', 'spread_2', 'spread_3', 'spread_4', 'spread_5',
-        'trade_intensity', 'bid_pressure', 'ask_pressure', 'pressure_imbalance',
+        "spread_0",
+        "spread_1",
+        "spread_2",
+        "spread_3",
+        "spread_4",
+        "spread_5",
+        "trade_intensity",
+        "bid_pressure",
+        "ask_pressure",
+        "pressure_imbalance",
     ]
 
     @staticmethod
     def compute(features: np.ndarray, eps: float = 1e-8) -> np.ndarray:
-        """Compute derived features from raw LOB features.
+        """Compute derived features from raw features.
 
         Args:
             features: Raw features of shape (..., 32)
-            eps: Small constant for numerical stability
+            eps: Numerical stability epsilon
 
         Returns:
-            Derived features of shape (..., 10)
+            Array of shape (..., 10)
         """
-        # Raw layout: p0-p11 (0:12), v0-v11 (12:24), dp0-dp3 (24:28), dv0-dv3 (28:32)
-        # Bid prices: p0-p5 (0:6), Ask prices: p6-p11 (6:12)
-        # Bid volumes: v0-v5 (12:18), Ask volumes: v6-v11 (18:24)
-
-        # Spreads: ask - bid at each of 6 levels
         spreads = features[..., 6:12] - features[..., 0:6]
-
-        # Trade intensity: sum of trade volumes
         trade_intensity = features[..., 28:32].sum(axis=-1, keepdims=True)
-
-        # Bid/ask pressure
         bid_pressure = features[..., 12:18].sum(axis=-1, keepdims=True)
         ask_pressure = features[..., 18:24].sum(axis=-1, keepdims=True)
-
-        # Imbalance
-        pressure_imbalance = (
-            (bid_pressure - ask_pressure)
-            / (bid_pressure + ask_pressure + eps)
-        )
+        pressure_imbalance = (bid_pressure - ask_pressure) / (bid_pressure + ask_pressure + eps)
 
         return np.concatenate(
             [spreads, trade_intensity, bid_pressure, ask_pressure, pressure_imbalance],
@@ -59,64 +46,40 @@ class DerivedFeatureBuilder:
 
     @staticmethod
     def compute_single(features: np.ndarray, eps: float = 1e-8) -> np.ndarray:
-        """Compute derived features for a single 1-D feature vector (online inference).
-
-        Args:
-            features: Raw features of shape (32,)
-            eps: Small constant
-
-        Returns:
-            Augmented features of shape (42,) = raw (32) + derived (10)
-        """
+        """Compute derived features for a single raw state."""
         derived = DerivedFeatureBuilder.compute(features, eps)
         return np.concatenate([features, derived], axis=-1).astype(np.float32)
 
 
 class TemporalDerivedFeatureBuilder:
-    """Compute temporal derived features that depend on previous timesteps.
-
-    Requires the 42-feature input (32 raw + 10 derived from DerivedFeatureBuilder).
-    Adds 3 temporal features:
-    - spread0_roc1: spread_0[t] - spread_0[t-1]  (rate of change, lag 1)
-    - spread0_roc5: spread_0[t] - spread_0[t-5]  (rate of change, lag 5)
-    - trade_intensity_roll_mean_5: rolling mean of trade_intensity over 5 steps
-
-    Derived feature layout (indices 32-41 in the 42-feature vector):
-      32: spread_0, 33-37: spread_1..5, 38: trade_intensity,
-      39: bid_pressure, 40: ask_pressure, 41: pressure_imbalance
-    """
+    """Compute temporal derived features from base 42-dim (raw + derived) features."""
 
     N_TEMPORAL = 3
-    TEMPORAL_COLS = ['spread0_roc1', 'spread0_roc5', 'trade_intensity_roll_mean_5']
+    TEMPORAL_COLS = ["spread0_roc1", "spread0_roc5", "trade_intensity_roll_mean_5"]
 
     @staticmethod
     def compute_batch(features: np.ndarray) -> np.ndarray:
-        """Compute temporal features for a batch of sequences.
+        """Compute temporal features for a batch of full sequences.
 
         Args:
-            features: Shape (n_seqs, seq_len, 42) — raw + derived features
+            features: Shape (n_seqs, seq_len, >=42), where first 42 columns are raw+derived.
 
         Returns:
-            Temporal features of shape (n_seqs, seq_len, 3)
+            Array of shape (n_seqs, seq_len, 3)
         """
-        spread_0 = features[..., 32]   # (n_seqs, seq_len)
-        trade_int = features[..., 38]  # (n_seqs, seq_len)
+        spread_0 = features[..., 32]
+        trade_int = features[..., 38]
 
-        # Rate of change lag 1
         roc1 = np.zeros_like(spread_0)
         roc1[:, 1:] = spread_0[:, 1:] - spread_0[:, :-1]
 
-        # Rate of change lag 5
         roc5 = np.zeros_like(spread_0)
         roc5[:, 5:] = spread_0[:, 5:] - spread_0[:, :-5]
 
-        # Rolling mean of trade_intensity over window of 5
         roll_mean = np.zeros_like(trade_int)
         cumsum = np.cumsum(trade_int, axis=1)
-        # Positions 0-3: expanding mean
         for i in range(min(4, features.shape[1])):
             roll_mean[:, i] = cumsum[:, i] / (i + 1)
-        # Positions >= 4: full 5-step window
         if features.shape[1] > 4:
             shifted = np.zeros_like(cumsum)
             shifted[:, 5:] = cumsum[:, :-5]
@@ -125,11 +88,48 @@ class TemporalDerivedFeatureBuilder:
         return np.stack([roc1, roc5, roll_mean], axis=-1).astype(np.float32)
 
 
-class TemporalBuffer:
-    """Maintains state for online (step-by-step) temporal feature computation.
+class InteractionFeatureBuilder:
+    """Compute cross-feature interactions used by refined GRU/attention variants.
 
-    Used during competition inference where we see one DataPoint at a time.
+    Adds 3 interaction features:
+    - v8_p0: v8 * p0
+    - spread0_p0: spread_0 * p0
+    - spread0_v2: spread_0 * v2
     """
+
+    N_INTERACTION = 3
+    INTERACTION_COLS = ["v8_p0", "spread0_p0", "spread0_v2"]
+
+    @staticmethod
+    def compute(features: np.ndarray, has_derived: bool = True) -> np.ndarray:
+        """Compute interaction features.
+
+        Args:
+            features: Feature tensor of shape (..., D). D can be 32 raw, 42 raw+derived,
+                or larger where the first 42 columns preserve raw+derived layout.
+            has_derived: Whether spread_0 is already available at index 32.
+
+        Returns:
+            Array of shape (..., 3)
+        """
+        p0 = features[..., 0]
+        v2 = features[..., 14]
+        v8 = features[..., 20]
+
+        if has_derived and features.shape[-1] >= 33:
+            spread_0 = features[..., 32]
+        else:
+            spread_0 = features[..., 6] - features[..., 0]
+
+        interactions = np.stack(
+            [v8 * p0, spread_0 * p0, spread_0 * v2],
+            axis=-1,
+        )
+        return interactions.astype(np.float32)
+
+
+class TemporalBuffer:
+    """Stateful temporal feature computation for online inference."""
 
     def __init__(self):
         self.reset()
@@ -140,13 +140,13 @@ class TemporalBuffer:
         self.trade_int_history = []
 
     def compute_step(self, features_42: np.ndarray) -> np.ndarray:
-        """Compute temporal features for a single step, maintaining buffer.
+        """Compute temporal features incrementally.
 
         Args:
-            features_42: Shape (42,) — raw + derived features for current step
+            features_42: Array of shape (>=42,), where first 42 columns are raw+derived.
 
         Returns:
-            Shape (45,) — original 42 + 3 temporal features appended
+            Input with 3 temporal columns appended.
         """
         spread_0 = float(features_42[32])
         trade_int = float(features_42[38])
@@ -154,16 +154,9 @@ class TemporalBuffer:
         self.spread0_history.append(spread_0)
         self.trade_int_history.append(trade_int)
 
-        # spread0_roc1
         roc1 = spread_0 - self.spread0_history[-2] if self.step >= 1 else 0.0
-
-        # spread0_roc5
         roc5 = spread_0 - self.spread0_history[-6] if self.step >= 5 else 0.0
-
-        # trade_intensity_roll_mean_5
-        window = self.trade_int_history[-5:]
-        roll_mean = sum(window) / len(window)
-
+        roll_mean = sum(self.trade_int_history[-5:]) / len(self.trade_int_history[-5:])
         self.step += 1
 
         temporal = np.array([roc1, roc5, roll_mean], dtype=np.float32)
@@ -171,92 +164,40 @@ class TemporalBuffer:
 
 
 class Normalizer:
-    """Z-score normalizer for LOB features.
-    
-    Computes mean and standard deviation from training data,
-    then applies normalization to transform features to zero mean
-    and unit variance.
-    """
-    
+    """Z-score normalizer."""
+
     def __init__(self):
         self.mean: Optional[np.ndarray] = None
         self.std: Optional[np.ndarray] = None
         self.eps = 1e-8
-    
-    def fit(self, X: np.ndarray) -> 'Normalizer':
-        """Compute mean and std from training data.
-        
-        Args:
-            X: Training features array of shape (n_samples, n_features)
-               or (n_samples, seq_len, n_features)
-        
-        Returns:
-            self for method chaining
-        """
-        # Flatten to (n_samples, n_features) if needed
+
+    def fit(self, X: np.ndarray) -> "Normalizer":
         if len(X.shape) == 3:
             X = X.reshape(-1, X.shape[-1])
-        
         self.mean = X.mean(axis=0).astype(np.float32)
         self.std = X.std(axis=0).astype(np.float32)
-        
-        # Prevent division by zero for constant features
         self.std[self.std < self.eps] = 1.0
-        
         return self
-    
+
     def transform(self, X: np.ndarray) -> np.ndarray:
-        """Apply normalization.
-        
-        Args:
-            X: Features array of shape (n_samples, n_features)
-               or (seq_len, n_features) or (batch, seq_len, n_features)
-        
-        Returns:
-            Normalized features with same shape as input
-        """
         if self.mean is None:
             raise RuntimeError("Normalizer not fitted. Call fit() first.")
-        
         return ((X - self.mean) / self.std).astype(np.float32)
-    
+
     def inverse_transform(self, X: np.ndarray) -> np.ndarray:
-        """Reverse normalization.
-        
-        Args:
-            X: Normalized features
-        
-        Returns:
-            Original scale features
-        """
         if self.mean is None:
             raise RuntimeError("Normalizer not fitted. Call fit() first.")
-        
         return (X * self.std + self.mean).astype(np.float32)
-    
+
     def save(self, path: str) -> None:
-        """Save normalizer parameters to file.
-        
-        Args:
-            path: Path to save .npz file
-        """
         if self.mean is None:
             raise RuntimeError("Normalizer not fitted. Call fit() first.")
-        
         np.savez(path, mean=self.mean, std=self.std)
-    
+
     @classmethod
-    def load(cls, path: str) -> 'Normalizer':
-        """Load normalizer from file.
-        
-        Args:
-            path: Path to .npz file
-        
-        Returns:
-            Loaded Normalizer instance
-        """
+    def load(cls, path: str) -> "Normalizer":
         data = np.load(path)
         norm = cls()
-        norm.mean = data['mean']
-        norm.std = data['std']
+        norm.mean = data["mean"]
+        norm.std = data["std"]
         return norm

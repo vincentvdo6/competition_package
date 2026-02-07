@@ -10,7 +10,12 @@ import pandas as pd
 import numpy as np
 from typing import Tuple, Dict, Optional, List
 
-from .preprocessing import Normalizer, DerivedFeatureBuilder, TemporalDerivedFeatureBuilder
+from .preprocessing import (
+    DerivedFeatureBuilder,
+    InteractionFeatureBuilder,
+    Normalizer,
+    TemporalDerivedFeatureBuilder,
+)
 
 
 class LOBSequenceDataset(Dataset):
@@ -35,9 +40,11 @@ class LOBSequenceDataset(Dataset):
         normalizer: Optional[Normalizer] = None,
         derived_features: bool = False,
         temporal_features: bool = False,
+        interaction_features: bool = False,
     ):
         self.derived_features = derived_features
         self.temporal_features = temporal_features and derived_features  # temporal requires derived
+        self.interaction_features = interaction_features
         self.df = pd.read_parquet(parquet_path)
         self.seq_ids = np.sort(self.df['seq_ix'].unique())
         n_seqs = len(self.seq_ids)
@@ -68,6 +75,13 @@ class LOBSequenceDataset(Dataset):
         if self.temporal_features:
             temporal = TemporalDerivedFeatureBuilder.compute_batch(features_all)
             features_all = np.concatenate([features_all, temporal], axis=-1)
+
+        # Interaction features are stateless and computed from raw/derived columns.
+        if self.interaction_features:
+            interactions = InteractionFeatureBuilder.compute(
+                features_all, has_derived=self.derived_features
+            )
+            features_all = np.concatenate([features_all, interactions], axis=-1)
 
         n_features = features_all.shape[-1]
 
@@ -109,6 +123,7 @@ def create_dataloaders(
     pin_memory: bool = False,
     derived_features: bool = False,
     temporal_features: bool = False,
+    interaction_features: bool = False,
 ) -> Tuple[DataLoader, DataLoader, Optional[Normalizer]]:
     """Create train and validation dataloaders with shared normalizer.
 
@@ -119,6 +134,7 @@ def create_dataloaders(
     train_dataset = LOBSequenceDataset(
         train_path, normalize=normalize, derived_features=derived_features,
         temporal_features=temporal_features,
+        interaction_features=interaction_features,
     )
 
     valid_dataset = LOBSequenceDataset(
@@ -127,6 +143,7 @@ def create_dataloaders(
         normalizer=train_dataset.normalizer if normalize else None,
         derived_features=derived_features,
         temporal_features=temporal_features,
+        interaction_features=interaction_features,
     )
 
     train_loader = DataLoader(

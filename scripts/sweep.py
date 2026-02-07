@@ -108,6 +108,7 @@ def run_single(config: dict, run_name: str, device: str) -> dict:
     from src.training.losses import get_loss_function
 
     # Inline model factory (same as train.py)
+    from src.models.gru_attention import GRUAttentionModel
     from src.models.gru_baseline import GRUBaseline
     from src.models.lstm_model import LSTMModel
 
@@ -115,6 +116,8 @@ def run_single(config: dict, run_name: str, device: str) -> dict:
         mt = cfg.get('model', {}).get('type', 'gru')
         if mt == 'gru':
             return GRUBaseline(cfg)
+        elif mt == 'gru_attention':
+            return GRUAttentionModel(cfg)
         elif mt == 'lstm':
             return LSTMModel(cfg)
         else:
@@ -140,6 +143,7 @@ def run_single(config: dict, run_name: str, device: str) -> dict:
         pin_memory=dev.type == 'cuda',
         derived_features=data_cfg.get('derived_features', False),
         temporal_features=data_cfg.get('temporal_features', False),
+        interaction_features=data_cfg.get('interaction_features', False),
     )
 
     # Model, loss, trainer

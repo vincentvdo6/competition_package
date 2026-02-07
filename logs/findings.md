@@ -191,3 +191,51 @@
 6. **First submission**: tightwd_v2 single model → LB 0.2580, rank 338/4598.
 
 **Action**: Implement seed-controlled training + ensemble framework. Train 5 seeds of tightwd_v2, average for more stable score. Target: top 100 via ensemble + architecture diversity.
+
+## [2026-02-07] Wave 1 Setup: Seed Diversity Notebook + Runner
+**Source**: notebooks/04_seed_diversity_analysis.ipynb, notebooks/run_04_seed_diversity_analysis.py
+**Result**:
+- Implemented full Wave 1 seed-diversity pipeline with strict online inference semantics:
+  - reset hidden state on new `seq_ix`
+  - process all timesteps including warm-up
+  - emit predictions only when `need_prediction=True`
+  - apply derived features before normalization
+- Runner generates required outputs: `model_scores.csv`, `pairwise_correlations.csv`, `optimal_weights.json`, `ensemble_vs_n_models.csv`, `diversity_by_target_bucket.csv`, plus plots.
+- Current local run is blocked because `logs/gru_derived_tightwd_v2_seed42..46.pt` checkpoints are not present yet; `status.json` + placeholder artifact files were written under `notebooks/artifacts/04_seed_diversity/`.
+**Action**: Once 5 seed checkpoints are available locally, rerun `python notebooks/run_04_seed_diversity_analysis.py` to populate full metrics/plots and finalize ensemble weights for submission.
+
+## [2026-02-07] Ensemble + Architecture Infrastructure Implemented (Wave 1/2)
+**Source**: `scripts/export_ensemble.py`, `src/models/gru_attention.py`, `src/data/preprocessing.py`, `src/data/dataset.py`, `scripts/train.py`, `scripts/evaluate.py`, `src/training/trainer.py`
+**Result**:
+- Implemented `GRUAttentionModel` with online-safe rolling attention context (`attention_window`) and `forward_step` support.
+- Added interaction feature pipeline (`v8*p0`, `spread_0*p0`, `spread_0*v2`) end-to-end through data preprocessing, dataset loading, train/eval scripts, and export code.
+- Upgraded `scripts/export_ensemble.py` to support:
+  - heterogeneous ensembles (`--config` or `--configs`)
+  - per-model preprocessing flags from config (`derived/temporal/interaction`)
+  - per-model normalizers (`--normalizer` or `--normalizers`)
+  - global weights (`--weights`) and per-target weights (`--weights-t0` + `--weights-t1`)
+  - optional weights import from JSON (`--weights-json`)
+- Added `scripts/build_wave1_candidates.py` to generate Candidate A/B/C zips directly from `notebooks/artifacts/04_seed_diversity/*`.
+- Upgraded training reproducibility artifacts:
+  - per-seed normalizer saved as `logs/normalizer_<config>_seed<seed>.npz`
+  - per-run history saved as `logs/training_history_<checkpoint_prefix>.json`
+- Added Wave 2 training configs:
+  - `configs/gru_interaction_tightwd_v1.yaml`
+  - `configs/gru_attention_interaction_v1.yaml`
+  - `configs/gru_attention_interaction_v1b.yaml`
+
+**Validation**:
+- `forward` vs `forward_step` parity (GRU baseline): max abs diff = `4.768e-07`
+- Hidden reset test:
+  - with reset: max diff vs fresh sequence = `0.0`
+  - without reset: max diff vs fresh sequence = `3.479`
+- Preprocessing parity (batch vs step, derived+temporal+interaction): max abs diff = `2.384e-07`
+- Ensemble exporter smoke-tested for:
+  - uniform/global weights
+  - per-target weights
+  - generated `solution.py` runtime inference
+- Added `scripts/validate_online_parity.py` to rerun these parity checks before export/submission.
+
+**Action**:
+- Sync Kaggle seed checkpoints locally, then run Wave 1 script to compute real `optimal_weights.json`.
+- Export and submit A/B/C candidates using `best_subset`, `optimal_weights`, and shrinked-optimal rules from plan.

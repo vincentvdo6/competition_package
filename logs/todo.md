@@ -61,14 +61,19 @@
 - [x] Add seed control (`--seed` flag) to scripts/train.py (@claude-code)
 - [x] Add per-seed checkpoint naming to trainer.py (@claude-code)
 - [x] Build scripts/export_ensemble.py — multi-model ensemble packager (@claude-code)
-- [ ] Train tightwd_v2 x5 seeds (42-46) on Kaggle (@user)
-- [ ] Seed diversity analysis notebook (04_seed_diversity_analysis) (@codex)
+- [x] Train tightwd_v2 x5 seeds (42-46) on Kaggle (@user) — scores: 0.2581/0.2646/0.2641/0.2586/0.2650
+- [x] Seed diversity analysis notebook (04_seed_diversity_analysis) (@codex) — runner + artifacts schema ready
+- [ ] Execute seed diversity analysis after seed checkpoints are synced locally (generate full metrics/plots/weights) (@codex)
 - [ ] Export seed ensemble + submit (@user)
+- [x] Upgrade `export_ensemble.py` for heterogeneous pipelines + per-model normalizers + per-target weights (@codex)
+- [x] Add `scripts/build_wave1_candidates.py` to auto-generate A/B/C candidate zips from run_04 artifacts (@codex)
+- [x] Add `scripts/validate_online_parity.py` for forward-step/reset/preprocessing parity checks (@codex)
 
 ### Wave 2: Architecture Diversity
-- [ ] Implement GRU+Attention model in src/models/gru_attention.py (@claude-code)
-- [ ] Add feature interaction features (v8*p0, spread_0*p0, spread_0*v2) (@claude-code)
-- [ ] Wire GRU+Attention through train/evaluate/export pipeline (@claude-code)
+- [x] Implement GRU+Attention model in src/models/gru_attention.py (@codex)
+- [x] Add feature interaction features (v8*p0, spread_0*p0, spread_0*v2) (@codex)
+- [x] Wire GRU+Attention through train/evaluate/export pipeline (@codex)
+- [x] Add Wave-2 configs (`gru_interaction_tightwd_v1`, `gru_attention_interaction_v1`, `gru_attention_interaction_v1b`) (@codex)
 - [ ] Attention prototype notebook (05_attention_prototype) (@codex) — go/no-go decision
 - [ ] Train gru_refined_v3, v3b, attention_v1 on Kaggle (@user)
 - [ ] Build diverse ensemble (GRU seeds + Attention + v3), submit (@user)

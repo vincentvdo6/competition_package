@@ -37,7 +37,7 @@ class BaseModel(nn.Module, ABC):
         """Forward pass for full sequences.
         
         Args:
-            x: Input tensor of shape (batch, seq_len, input_size=32)
+            x: Input tensor of shape (batch, seq_len, input_size)
             hidden: Model-specific hidden state (None = fresh sequence)
         
         Returns:
@@ -67,7 +67,7 @@ class BaseModel(nn.Module, ABC):
         """Forward pass for single timestep (online inference).
         
         Args:
-            x: Input tensor of shape (batch, input_size=32) for single step
+            x: Input tensor of shape (batch, input_size) for single step
             hidden: Model-specific hidden state (None = fresh sequence)
         
         Returns:

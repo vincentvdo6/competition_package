@@ -297,13 +297,19 @@ class Trainer:
 
     def _save_history(self, history: Dict) -> None:
         """Save per-epoch training history to JSON for curve diagnostics."""
-        history_path = os.path.join(self.log_dir, 'training_history.json')
+        prefix = self.config.get('logging', {}).get('checkpoint_prefix', None)
+        if prefix:
+            history_name = f"training_history_{prefix}.json"
+        else:
+            history_name = "training_history.json"
+        history_path = os.path.join(self.log_dir, history_name)
         serializable = {
             'train_loss': history['train_loss'],
             'val_scores': history['val_scores'],
             'learning_rates': history['learning_rates'],
             'best_score': self.best_score,
             'best_epoch': self.best_epoch,
+            'seed': self.config.get('seed', None),
         }
         with open(history_path, 'w') as f:
             json.dump(serializable, f, indent=2)

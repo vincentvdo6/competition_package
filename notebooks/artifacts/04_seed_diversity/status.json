@@ -1,0 +1,18 @@
+{
+  "status": "missing_checkpoints",
+  "expected": [
+    "C:\\Users\\Vincent\\Desktop\\competition_package\\logs\\gru_derived_tightwd_v2_seed42.pt",
+    "C:\\Users\\Vincent\\Desktop\\competition_package\\logs\\gru_derived_tightwd_v2_seed43.pt",
+    "C:\\Users\\Vincent\\Desktop\\competition_package\\logs\\gru_derived_tightwd_v2_seed44.pt",
+    "C:\\Users\\Vincent\\Desktop\\competition_package\\logs\\gru_derived_tightwd_v2_seed45.pt",
+    "C:\\Users\\Vincent\\Desktop\\competition_package\\logs\\gru_derived_tightwd_v2_seed46.pt"
+  ],
+  "missing": [
+    "C:\\Users\\Vincent\\Desktop\\competition_package\\logs\\gru_derived_tightwd_v2_seed42.pt",
+    "C:\\Users\\Vincent\\Desktop\\competition_package\\logs\\gru_derived_tightwd_v2_seed43.pt",
+    "C:\\Users\\Vincent\\Desktop\\competition_package\\logs\\gru_derived_tightwd_v2_seed44.pt",
+    "C:\\Users\\Vincent\\Desktop\\competition_package\\logs\\gru_derived_tightwd_v2_seed45.pt",
+    "C:\\Users\\Vincent\\Desktop\\competition_package\\logs\\gru_derived_tightwd_v2_seed46.pt"
+  ],
+  "next_step": "Train or copy the seed checkpoints, then rerun notebooks/run_04_seed_diversity_analysis.py"
+}
