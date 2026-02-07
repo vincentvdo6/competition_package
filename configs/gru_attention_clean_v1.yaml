@@ -16,7 +16,7 @@ training:
   lr: 0.0007
   weight_decay: 6e-5
   epochs: 40
-  batch_size: 32
+  batch_size: 192
   gradient_clip: 1.0
   early_stopping_patience: 9
   loss: combined
