@@ -157,3 +157,37 @@
   - `weight_decay`: 1e-5 to 8e-5
 - Regularization readout: feature dropout and moderately higher weight decay are promising; label smoothing is not a primary fit for this regression objective.
 **Action**: Run focused GRU+derived sweeps in the recommended ranges and persist per-epoch history in future runs to enable exact curve diagnostics.
+
+---
+
+## [2026-02-06] V2 Config Results + Temporal Features
+
+**Source**: Kaggle training runs
+
+### Full Results Table (all experiments to date)
+
+| Config | Val Avg | t0 | t1 | Best Epoch | Params | Notes |
+|--------|---------|------|------|------------|--------|-------|
+| gru_baseline | 0.2578 | 0.3869 | 0.1286 | 8 | 211K | Original |
+| gru_derived_v1 (run 1) | 0.2614 | 0.3912 | 0.1316 | 7 | 212K | Derived +0.0036 |
+| gru_derived_v1 (run 2) | 0.2608 | 0.3841 | 0.1374 | 7 | 212K | Variance: 0.0006 |
+| gru_derived_t1focus_v1 (run 1) | 0.2536 | 0.3854 | 0.1218 | 9 | 212K | target_weights HURT |
+| gru_derived_t1focus_v1 (run 2) | 0.2611 | 0.3909 | 0.1314 | 7 | 212K | Variance: 0.0075! |
+| gru_long_memory_derived_v1 | 0.2609 | 0.3869 | 0.1348 | 4 | 694K | Overfits fast |
+| lstm_derived_v1 | 0.2542 | 0.3836 | 0.1247 | 11 | 278K | LSTM < GRU |
+| gru_temporal_v1 | 0.2512 | 0.3863 | 0.1160 | 7 | 212K | Temporal HURT |
+| gru_derived_reg_v2 | 0.2660 | 0.3967 | 0.1352 | 8 | 212K | Strong reg helps |
+| **gru_derived_tightwd_v2 (run 1)** | **0.2674** | 0.3955 | 0.1394 | 9 | 267K | **BEST LOCAL** |
+| gru_derived_onecycle_v2 | 0.2566 | 0.3804 | 0.1327 | 10 | 212K | LR too aggressive |
+| gru_derived_tightwd_v2 (run 2) | 0.2579 | 0.3839 | 0.1318 | 7 | 267K | Variance: 0.0095! |
+
+### Key Findings
+
+1. **Regularization is the #1 lever**: higher dropout (0.22-0.24), higher WD (4-5e-5), faster LR decay → best results. tightwd_v2 and reg_v2 are top 2.
+2. **hidden_size=144 helps** when paired with strong regularization. 267K params with dropout 0.22 + WD 5e-5 beats 212K.
+3. **Temporal features HURT** (0.2512 vs 0.2614). Lower loss but worse correlation — GRU hidden state already captures temporal patterns.
+4. **OneCycleLR too aggressive**: max_lr=lr*10 overshoots. ReduceLROnPlateau is better.
+5. **Run-to-run variance is huge**: tightwd_v2 gave 0.2674 then 0.2579 (0.0095 gap). This makes seed ensembling critical.
+6. **First submission**: tightwd_v2 single model → LB 0.2580, rank 338/4598.
+
+**Action**: Implement seed-controlled training + ensemble framework. Train 5 seeds of tightwd_v2, average for more stable score. Target: top 100 via ensemble + architecture diversity.

@@ -227,8 +227,10 @@ class Trainer:
                 self.best_score = avg_score
                 self.best_epoch = epoch + 1
                 self.epochs_without_improvement = 0
+                prefix = self.config.get('logging', {}).get('checkpoint_prefix', None)
+                ckpt_name = f"{prefix}.pt" if prefix else 'best_model.pt'
                 self._save_checkpoint('best_model.pt')
-                print(f"  -> New best model saved!")
+                print(f"  -> New best model saved! ({ckpt_name})")
             else:
                 self.epochs_without_improvement += 1
                 if self.epochs_without_improvement >= self.patience:
@@ -249,8 +251,11 @@ class Trainer:
         """Save model checkpoint.
 
         Args:
-            filename: Checkpoint filename
+            filename: Checkpoint filename (may be overridden by checkpoint_prefix)
         """
+        prefix = self.config.get('logging', {}).get('checkpoint_prefix', None)
+        if prefix:
+            filename = f"{prefix}.pt"
         path = os.path.join(self.log_dir, filename)
         torch.save({
             'model_state_dict': self.model.state_dict(),
@@ -258,7 +263,8 @@ class Trainer:
             'scheduler_state_dict': self.scheduler.state_dict(),
             'config': self.config,
             'best_score': self.best_score,
-            'best_epoch': self.best_epoch
+            'best_epoch': self.best_epoch,
+            'seed': self.config.get('seed', None)
         }, path)
 
     def _log_experiment(self, history: Dict) -> None:
@@ -273,6 +279,7 @@ class Trainer:
             'timestamp': datetime.now().isoformat(),
             'model': self.config.get('model', {}).get('type', 'unknown'),
             'config': self.config,
+            'seed': self.config.get('seed', None),
             'val_score_t0': final_scores.get('t0'),
             'val_score_t1': final_scores.get('t1'),
             'val_score_avg': final_scores.get('avg'),

@@ -50,21 +50,39 @@
 - [x] Create improved configs based on analysis (@codex)
 
 ### New Follow-ups from Codex Analysis
-- [ ] Implement candidate temporal derived features (`spread0_roc1`, `spread0_roc5`, `trade_intensity_roll_mean_5`) with config flags in `src/data/preprocessing.py` (@claude-code)
-- [ ] Run new GRU+derived configs: `gru_derived_reg_v2.yaml`, `gru_derived_tightwd_v2.yaml`, `gru_derived_onecycle_v2.yaml` (@user on Kaggle)
-- [ ] Persist per-epoch train/val history (loss + t0/t1/avg scores) for future curve diagnostics (@claude-code)
+- [x] Implement candidate temporal derived features (`spread0_roc1`, `spread0_roc5`, `trade_intensity_roll_mean_5`) (@claude-code) — RESULT: temporal features HURT (0.2512 vs 0.2614), deprioritized
+- [x] Run new GRU+derived configs: `gru_derived_reg_v2.yaml` (0.2660), `gru_derived_tightwd_v2.yaml` (**0.2674 BEST**), `gru_derived_onecycle_v2.yaml` (0.2566) (@user on Kaggle)
+- [x] Persist per-epoch train/val history (loss + t0/t1/avg scores) (@claude-code)
+- [x] First submission: tightwd_v2 single model — LB score **0.2580**, rank **338/4598** (@user)
 
-## Phase 3 — Architecture Exploration
+## Phase 3 — Ensemble & Architecture Diversity (IN PROGRESS)
 
-- [x] LSTM implementation (@claude-code) — RESULT: underperforms GRU, deprioritized
+### Wave 1: Seed Ensemble (highest ROI)
+- [x] Add seed control (`--seed` flag) to scripts/train.py (@claude-code)
+- [x] Add per-seed checkpoint naming to trainer.py (@claude-code)
+- [x] Build scripts/export_ensemble.py — multi-model ensemble packager (@claude-code)
+- [ ] Train tightwd_v2 x5 seeds (42-46) on Kaggle (@user)
+- [ ] Seed diversity analysis notebook (04_seed_diversity_analysis) (@codex)
+- [ ] Export seed ensemble + submit (@user)
+
+### Wave 2: Architecture Diversity
+- [ ] Implement GRU+Attention model in src/models/gru_attention.py (@claude-code)
+- [ ] Add feature interaction features (v8*p0, spread_0*p0, spread_0*v2) (@claude-code)
+- [ ] Wire GRU+Attention through train/evaluate/export pipeline (@claude-code)
+- [ ] Attention prototype notebook (05_attention_prototype) (@codex) — go/no-go decision
+- [ ] Train gru_refined_v3, v3b, attention_v1 on Kaggle (@user)
+- [ ] Build diverse ensemble (GRU seeds + Attention + v3), submit (@user)
+
+### Wave 3: Optimization
+- [ ] Add SWA (Stochastic Weight Averaging) support to trainer.py (@claude-code)
+- [ ] Add post-processing (EMA, scaling) to ensemble export (@claude-code)
+- [ ] Greedy ensemble selection script (@claude-code)
+- [ ] Ensemble optimization notebook (06_ensemble_optimization) (@codex)
+- [ ] Post-processing analysis notebook (07_postprocessing) (@codex)
+- [ ] Final optimized ensemble + submit (@user)
+
+## Phase 4 — Stretch Goals
 - [ ] Transformer with causal masking (@claude-code)
+- [ ] Mamba/SSM architecture (@claude-code)
 - [ ] Sequence length ablation study (@codex)
-- [ ] Architecture comparison notebook (@codex)
-
-## Phase 4 — Optimization & Submission
-
-- [ ] Run hyperparameter sweeps on gru_derived_v1 (lr, dropout) (@user on Kaggle)
-- [ ] Ensemble top models (@claude-code)
-- [ ] Final hyperparameter fine-tuning (@both)
-- [ ] Export and validate submission zip (@claude-code)
-- [ ] Verify submission in clean environment (@claude-code)
+- [ ] Cross-validation framework (@codex)

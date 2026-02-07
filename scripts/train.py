@@ -2,8 +2,10 @@
 """Training script for Wunderfund Predictorium models."""
 
 import argparse
+import random
 import yaml
 import torch
+import numpy as np
 import os
 import sys
 
@@ -16,6 +18,16 @@ from src.models.gru_baseline import GRUBaseline
 from src.models.lstm_model import LSTMModel
 from src.training.trainer import Trainer, setup_cpu_performance
 from src.training.losses import get_loss_function
+
+
+def set_seed(seed: int) -> None:
+    """Set all random seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def load_config(config_path: str) -> dict:
@@ -42,11 +54,23 @@ def main():
                         help='Path to config YAML file')
     parser.add_argument('--device', type=str, default='auto',
                         help='Device to use (cuda/cpu/auto)')
+    parser.add_argument('--seed', type=int, default=42,
+                        help='Random seed for reproducibility')
     args = parser.parse_args()
+
+    # Set seed
+    set_seed(args.seed)
+    print(f"Random seed: {args.seed}")
 
     # Load config
     config = load_config(args.config)
+    config['seed'] = args.seed
     print(f"Loaded config from {args.config}")
+
+    # Derive run name for per-seed checkpoints
+    config_name = os.path.splitext(os.path.basename(args.config))[0]
+    run_name = f"{config_name}_seed{args.seed}"
+    config.setdefault('logging', {})['checkpoint_prefix'] = run_name
 
     # Determine device
     if args.device == 'auto':
