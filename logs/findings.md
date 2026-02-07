@@ -239,3 +239,30 @@
 **Action**:
 - Sync Kaggle seed checkpoints locally, then run Wave 1 script to compute real `optimal_weights.json`.
 - Export and submit A/B/C candidates using `best_subset`, `optimal_weights`, and shrinked-optimal rules from plan.
+
+## [2026-02-07] Wave 1 Leaderboard Results — Seed Ensemble Submissions
+
+**Source**: wundernn.io competition leaderboard
+
+### Results
+
+| Submission | LB Score | Strategy |
+|-----------|----------|----------|
+| submission.zip | 0.2580 | Single tightwd_v2 seed42 |
+| ensemble top3 uniform.zip | 0.2604 | Top 3 seeds, uniform weights |
+| ensemble weighted5 v1.zip | 0.2607 | All 5 seeds, optimized weights |
+| **ensemble.zip** | **0.2614** | All 5 seeds, uniform weights |
+
+### Key Findings
+
+1. **Seed ensembling delivers +0.0034 LB improvement** (0.2580 → 0.2614). Confirms that reducing seed variance is the right strategy.
+2. **Uniform averaging > optimized weights on LB**. The simple 5-seed uniform ensemble (0.2614) beat the optimized-weight variant (0.2607). Optimized weights likely overfit to local val noise.
+3. **More models > fewer models**. 5-seed uniform (0.2614) > 3-seed uniform (0.2604). Including weaker seeds still helps via variance reduction.
+4. **LB vs local val gap persists**. Best local val was 0.2674 (single seed), LB is 0.2614 (5-seed ensemble). The train→valid distribution shift noted in EDA is real and hurts.
+
+### Implications for Wave 2
+- Architecture diversity (GRU+Attention) should provide more ensemble lift than more GRU seeds, since GRU seed predictions are correlated.
+- Keep uniform weighting as the default — don't over-optimize ensemble weights.
+- The 0.2614 LB is the new baseline to beat. Target: 0.2650+ with diverse ensemble.
+
+**Action**: Train Wave 2 configs (gru_attention_interaction_v1, gru_refined_v3) on Kaggle. Fold best into diverse ensemble with the 5 GRU seeds.

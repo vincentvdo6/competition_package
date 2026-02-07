@@ -15,6 +15,7 @@ import numpy as np
 import json
 import os
 import time
+import sys
 from datetime import datetime
 from tqdm import tqdm
 from typing import Dict, Optional, Tuple, List
@@ -56,6 +57,8 @@ class Trainer:
         self.epochs = int(train_cfg.get('epochs', 50))
         self.gradient_clip = float(train_cfg.get('gradient_clip', 1.0))
         self.patience = int(train_cfg.get('early_stopping_patience', 10))
+        self.batch_log_interval = int(train_cfg.get('batch_log_interval', 10))
+        self.use_tqdm = bool(train_cfg.get('use_tqdm', True)) and sys.stdout.isatty()
 
         # Optimizer
         self.optimizer = AdamW(
@@ -110,8 +113,12 @@ class Trainer:
         total_loss = 0.0
         num_batches = len(self.train_loader)
 
-        pbar = tqdm(self.train_loader, desc="Training", leave=False)
-        for features, targets, mask in pbar:
+        if self.use_tqdm:
+            batch_iter = tqdm(self.train_loader, desc="Training", leave=False)
+        else:
+            batch_iter = self.train_loader
+
+        for batch_idx, (features, targets, mask) in enumerate(batch_iter, start=1):
             features = features.to(self.device, non_blocking=True)
             targets = targets.to(self.device, non_blocking=True)
             mask = mask.to(self.device, non_blocking=True)
@@ -138,7 +145,17 @@ class Trainer:
                 self.scheduler.step()
 
             total_loss += loss.item()
-            pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+            if self.use_tqdm:
+                batch_iter.set_postfix({'loss': f'{loss.item():.4f}'})
+            elif (
+                batch_idx % max(1, self.batch_log_interval) == 0
+                or batch_idx == num_batches
+            ):
+                print(
+                    f"    Batch {batch_idx:4d}/{num_batches} | "
+                    f"loss: {loss.item():.4f}",
+                    flush=True,
+                )
 
         return total_loss / num_batches
 
@@ -177,18 +194,22 @@ class Trainer:
 
     def train(self) -> Dict:
         """Full training loop with early stopping and per-epoch timing."""
-        print(f"Starting training for up to {self.epochs} epochs")
-        print(f"Device: {self.device}")
+        print(f"Starting training for up to {self.epochs} epochs", flush=True)
+        print(f"Device: {self.device}", flush=True)
         if self.device.type == 'cuda':
-            print(f"GPU: {torch.cuda.get_device_name(0)}")
-            print(f"Mixed precision (AMP): {self.use_amp}")
+            print(f"GPU: {torch.cuda.get_device_name(0)}", flush=True)
+            print(f"Mixed precision (AMP): {self.use_amp}", flush=True)
         else:
-            print(f"CPU threads: {torch.get_num_threads()}")
-        print(f"Model parameters: {self.model.count_parameters():,}")
-        print(f"Train batches: {len(self.train_loader)}, Valid batches: {len(self.valid_loader)}")
-        print(f"Batch size: {self.train_loader.batch_size}")
-        print(f"Scheduler: {self.sched_type}")
-        print("-" * 60)
+            print(f"CPU threads: {torch.get_num_threads()}", flush=True)
+        print(f"Model parameters: {self.model.count_parameters():,}", flush=True)
+        print(
+            f"Train batches: {len(self.train_loader)}, Valid batches: {len(self.valid_loader)}",
+            flush=True,
+        )
+        print(f"Batch size: {self.train_loader.batch_size}", flush=True)
+        print(f"Scheduler: {self.sched_type}", flush=True)
+        print(f"Progress mode: {'tqdm' if self.use_tqdm else 'batch logs'}", flush=True)
+        print("-" * 60, flush=True)
 
         history = {
             'train_loss': [],
@@ -221,7 +242,7 @@ class Trainer:
                   f"Val t1: {scores['t1']:.4f} | "
                   f"Val avg: {scores['avg']:.4f} | "
                   f"LR: {current_lr:.2e} | "
-                  f"{epoch_time:.1f}s")
+                  f"{epoch_time:.1f}s", flush=True)
 
             if avg_score > self.best_score:
                 self.best_score = avg_score
@@ -230,17 +251,21 @@ class Trainer:
                 prefix = self.config.get('logging', {}).get('checkpoint_prefix', None)
                 ckpt_name = f"{prefix}.pt" if prefix else 'best_model.pt'
                 self._save_checkpoint('best_model.pt')
-                print(f"  -> New best model saved! ({ckpt_name})")
+                print(f"  -> New best model saved! ({ckpt_name})", flush=True)
             else:
                 self.epochs_without_improvement += 1
                 if self.epochs_without_improvement >= self.patience:
-                    print(f"\nEarly stopping at epoch {epoch+1} (no improvement for {self.patience} epochs)")
+                    print(
+                        f"\nEarly stopping at epoch {epoch+1} "
+                        f"(no improvement for {self.patience} epochs)",
+                        flush=True,
+                    )
                     break
 
         total_time = time.time() - total_start
-        print("-" * 60)
-        print(f"Training complete in {total_time:.0f}s ({total_time/60:.1f}min)")
-        print(f"Best score: {self.best_score:.4f} at epoch {self.best_epoch}")
+        print("-" * 60, flush=True)
+        print(f"Training complete in {total_time:.0f}s ({total_time/60:.1f}min)", flush=True)
+        print(f"Best score: {self.best_score:.4f} at epoch {self.best_epoch}", flush=True)
 
         self._log_experiment(history)
         self._save_history(history)
