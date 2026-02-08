@@ -288,10 +288,17 @@ class PearsonCombinedLoss(nn.Module):
         targets: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        # Guard against empty mask (zero valid predictions in batch)
+        if mask is not None and mask.sum() == 0:
+            return torch.tensor(0.0, device=predictions.device, requires_grad=True)
         combined_loss = self.combined(predictions, targets, mask)
         pearson_loss = self.pearson(predictions, targets, mask)
         # pearson_loss is -corr, so (1 - corr) = 1 + pearson_loss
-        return self.alpha * combined_loss + (1.0 - self.alpha) * (1.0 + pearson_loss)
+        loss = self.alpha * combined_loss + (1.0 - self.alpha) * (1.0 + pearson_loss)
+        # Final NaN guard (should not happen, but prevents training crash)
+        if not loss.isfinite():
+            return torch.tensor(0.0, device=predictions.device, requires_grad=True)
+        return loss
 
 
 class HuberWeightedLoss(nn.Module):

@@ -88,7 +88,10 @@ class OnlineModelRunner:
         else:
             self.model = GRUBaseline(self.config)
 
-        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+        except TypeError:
+            checkpoint = torch.load(checkpoint_path, map_location=self.device)
         state_dict = checkpoint.get("model_state_dict", checkpoint)
         self.model.load_state_dict(state_dict)
         self.model.to(self.device)
@@ -181,7 +184,15 @@ def score_ensemble(
     n_models = len(model_preds)
 
     if weights_t0 is not None and weights_t1 is not None:
-        # Per-target weighting
+        # Per-target weighting — validate counts
+        if len(weights_t0) != n_models:
+            raise ValueError(
+                f"weights_t0 length ({len(weights_t0)}) != model count ({n_models})"
+            )
+        if len(weights_t1) != n_models:
+            raise ValueError(
+                f"weights_t1 length ({len(weights_t1)}) != model count ({n_models})"
+            )
         w0 = np.array(weights_t0) / np.sum(weights_t0)
         w1 = np.array(weights_t1) / np.sum(weights_t1)
         ensemble_pred = np.zeros_like(targets)
@@ -192,6 +203,10 @@ def score_ensemble(
         if weights is None:
             weights = [1.0 / n_models] * n_models
         else:
+            if len(weights) != n_models:
+                raise ValueError(
+                    f"weights length ({len(weights)}) != model count ({n_models})"
+                )
             w_total = sum(weights)
             weights = [w / w_total for w in weights]
         ensemble_pred = sum(w * p for w, p in zip(weights, model_preds))
@@ -399,9 +414,18 @@ def main():
     print("RECOMMENDATIONS")
     safe = [r for r in results if r["delta_p10"] >= 0]
     if safe:
-        print(f"  Slot 1 (conservative): {safe[0]['name']} (p10 delta: {safe[0]['delta_p10']:+.4f})")
-        upside = max(safe, key=lambda x: x["delta_mean"])
-        print(f"  Slot 2 (upside):       {upside['name']} (mean delta: {upside['delta_mean']:+.4f})")
+        # Slot 1 (conservative): highest p10 delta (best worst-case)
+        slot1 = max(safe, key=lambda x: x["delta_p10"])
+        print(f"  Slot 1 (conservative): {slot1['name']} (p10 delta: {slot1['delta_p10']:+.4f})")
+        # Slot 2 (upside): highest mean delta, but prefer a different candidate
+        safe_by_mean = sorted(safe, key=lambda x: x["delta_mean"], reverse=True)
+        slot2 = safe_by_mean[0]
+        if slot2["name"] == slot1["name"] and len(safe_by_mean) > 1:
+            slot2 = safe_by_mean[1]
+        if slot2["name"] == slot1["name"]:
+            print(f"  Slot 2 (upside):       (same as Slot 1 — only one safe candidate)")
+        else:
+            print(f"  Slot 2 (upside):       {slot2['name']} (mean delta: {slot2['delta_mean']:+.4f})")
     else:
         print("  WARNING: No candidate has non-negative p10 delta vs champion.")
         print(f"  Best available: {results[0]['name']} (mean delta: {results[0]['delta_mean']:+.4f})")
