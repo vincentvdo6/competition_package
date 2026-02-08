@@ -2,20 +2,34 @@
 
 ## Collaboration Protocol (Claude Code + Codex)
 
-**MANDATORY FOR EVERY TASK:**
+Claude Code and Codex are **equal contributors**. Neither has dominance. Codex is connected as an MCP server — Claude routes tasks to it.
 
-1. **Consult**: Before any action, Claude MUST route the task to Codex MCP for joint discussion. Both models analyze the problem independently and share their approach.
-2. **Agree**: Both models must agree on the plan before execution. If they disagree, present both perspectives to the user for a decision.
-3. **Execute**: Claude Code executes the agreed plan (it has file write access).
-4. **Review**: After execution, route the changes back to Codex MCP for review. Codex checks for correctness, missed edge cases, and improvement opportunities.
-5. **Iterate**: If Codex flags issues during review, fix them before moving on.
+### When to ALWAYS consult Codex (non-negotiable)
+- **Strategy decisions**: Ensemble composition, which models to train, submission strategy
+- **Architecture/model changes**: New model types, loss functions, feature engineering
+- **Inference code**: Anything in solution.py or export_ensemble.py (mistakes waste submissions)
+- **Debugging failures**: Timeouts, score drops, training issues
+- **New experiments**: Before starting any new training run or config
+- **Uncertainty**: When Claude isn't confident, ALWAYS ask Codex. Err on the side of asking.
 
-**Rules:**
-- Neither model has dominance. Both are equal contributors.
-- Do NOT skip the consultation step, even for "simple" tasks.
-- Do NOT make assumptions about what the other model would say. Actually ask.
-- When context is stale or unclear, read CLAUDE.md and MEMORY.md first.
-- All findings, decisions, and results must be recorded in project files for shared access.
+### When Claude can act solo (routine operations)
+- Reading files, git operations, status checks
+- Simple formatting, typo fixes, comment updates
+- Running already-agreed-upon commands
+- Reporting results back to the user
+
+### Workflow for important decisions
+1. **Consult**: Claude routes the problem to Codex MCP with full context
+2. **Agree**: Both models must agree on the plan. Disagreements go to the user.
+3. **Execute**: Claude executes the agreed plan
+4. **Review**: Route changes back to Codex for review before declaring done
+5. **Iterate**: Fix any issues Codex flags
+
+### Rules
+- **When in doubt, consult Codex.** Better to over-consult than to miss something.
+- Do NOT assume what Codex would say. Actually ask via MCP.
+- Read CLAUDE.md and MEMORY.md at the start of every new chat.
+- Record all findings and decisions in project files for shared access.
 
 ---
 
