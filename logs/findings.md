@@ -266,3 +266,64 @@
 - The 0.2614 LB is the new baseline to beat. Target: 0.2650+ with diverse ensemble.
 
 **Action**: Train Wave 2 configs (gru_attention_interaction_v1, gru_refined_v3) on Kaggle. Fold best into diverse ensemble with the 5 GRU seeds.
+
+## [2026-02-07] Wave 2 Ensemble Result — New Best LB
+
+**Source**: wundernn.io competition leaderboard
+
+### Result
+
+| Submission | LB Score | Composition |
+|-----------|----------|-------------|
+| ensemble.zip | 0.2614 | 5x GRU tightwd seeds, uniform |
+| **gru5_plus_attention2_balanced7030.zip** | **0.2633** | 5x GRU tightwd + 2x attention_clean, family-balanced 70/30 |
+
+### Key Findings
+
+1. Adding architecture diversity improved LB by **+0.0019** over the 5-seed GRU baseline (0.2614 -> 0.2633).
+2. A conservative family balance (GRU-heavy at 70%) was effective and reduced downside from weaker attention seeds.
+3. Attention models are useful as ensemble diversifiers even when their per-seed variance is high.
+
+### Action
+
+- Keep `gru5_plus_attention2_balanced7030` as the new safe baseline.
+- Next submission candidates should stay in the same mixed-family direction (small weight adjustments, or improved attention family members) rather than pure GRU weight tuning.
+
+## [2026-02-07] Phase 1 Infrastructure: Metric-Aligned Pearson Loss + Bootstrap Scorer
+
+**Source**: Plan discussion + implementation
+
+### Changes
+
+1. **WeightedPearsonLoss** added to `src/evaluation/metrics.py`:
+   - Differentiable weighted Pearson correlation matching competition metric exactly
+   - weights = |target|, predictions clipped to [-6, 6], mask support for warm-up exclusion
+   - Stability: variance floor, finite checks, handles degenerate batches
+
+2. **PearsonCombinedLoss** added to `src/evaluation/metrics.py`:
+   - Hybrid: `alpha * CombinedLoss + (1-alpha) * (1 - weighted_corr_avg)`
+   - Default alpha=0.6 (60% CombinedLoss for stable gradients + 40% Pearson for metric alignment)
+
+3. **Loss factory** updated in `src/training/losses.py`:
+   - `loss: weighted_pearson` — pure Pearson loss
+   - `loss: pearson_combined` — hybrid (recommended for training stability)
+   - Config fields: `pearson_alpha`, `pearson_eps`
+
+4. **New configs**:
+   - `configs/gru_pearson_v1.yaml` — tightwd_v2 base + pearson_combined, lr=0.0005
+   - `configs/gru_attention_pearson_v1.yaml` — attention_clean base + pearson_combined, lr=0.0005
+
+5. **Bootstrap candidate scorer** — `scripts/score_ensemble_candidates.py`:
+   - Online step-by-step inference matching competition semantics
+   - Sequence-level bootstrap resampling (configurable, default 200)
+   - Outputs: ranked table with delta vs champion, recommendations for conservative + upside slots
+
+### Validation
+- All loss functions pass sanity checks: finite output, non-zero gradients, perfect predictions → loss near -1
+- Both configs load correctly: model + loss instantiate without errors
+- Loss factory backward-compatible with all existing loss types
+
+### Action
+- Commit and push for Kaggle training
+- Train gru_pearson_v1 seeds 42-44 first (fast signal), then attention seeds 45-46, then attention_pearson if GRU Pearson promising
+- Gate: val_avg >= 0.2620 for pool inclusion

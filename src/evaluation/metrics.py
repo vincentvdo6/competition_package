@@ -164,6 +164,136 @@ class CombinedLoss(nn.Module):
         return (1 - self.weighted_ratio) * plain_mse + self.weighted_ratio * weighted
 
 
+class WeightedPearsonLoss(nn.Module):
+    """Differentiable weighted Pearson correlation loss.
+
+    Directly optimizes the competition metric: weighted Pearson correlation
+    where weights = |target|. Loss = -(corr_t0 + corr_t1) / 2.
+
+    Matches the competition implementation in utils.py:
+    - weights = max(|y_true|, eps)
+    - predictions clipped to [-6, 6]
+    - weighted mean, covariance, variance
+    """
+
+    def __init__(self, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+
+    def _weighted_pearson(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        weights: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute weighted Pearson correlation for a single target.
+
+        Args:
+            pred: (N,) predictions (already clipped)
+            target: (N,) ground truth
+            weights: (N,) sample weights (|target| + eps)
+
+        Returns:
+            Scalar correlation in [-1, 1]
+        """
+        sum_w = weights.sum()
+
+        # Weighted means
+        mean_pred = (weights * pred).sum() / sum_w
+        mean_target = (weights * target).sum() / sum_w
+
+        # Weighted deviations
+        dev_pred = pred - mean_pred
+        dev_target = target - mean_target
+
+        # Weighted covariance and variances
+        cov = (weights * dev_pred * dev_target).sum() / sum_w
+        var_pred = (weights * dev_pred ** 2).sum() / sum_w
+        var_target = (weights * dev_target ** 2).sum() / sum_w
+
+        # Stability: floor variances to avoid division by zero
+        std_pred = torch.sqrt(var_pred.clamp(min=self.eps))
+        std_target = torch.sqrt(var_target.clamp(min=self.eps))
+
+        corr = cov / (std_pred * std_target)
+        return corr
+
+    def forward(
+        self,
+        predictions: torch.Tensor,
+        targets: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Compute negative weighted Pearson correlation loss.
+
+        Args:
+            predictions: (batch, seq_len, 2) predicted values
+            targets: (batch, seq_len, 2) true values
+            mask: (batch, seq_len) bool mask for valid predictions
+
+        Returns:
+            Scalar loss = -(corr_t0 + corr_t1) / 2
+        """
+        # Clip predictions to match competition metric
+        predictions = predictions.clamp(-6.0, 6.0)
+
+        if mask is not None:
+            mask_flat = mask.reshape(-1)
+            pred_flat = predictions.reshape(-1, 2)[mask_flat]
+            target_flat = targets.reshape(-1, 2)[mask_flat]
+        else:
+            pred_flat = predictions.reshape(-1, 2)
+            target_flat = targets.reshape(-1, 2)
+
+        # Need enough samples for meaningful correlation
+        if pred_flat.shape[0] < 2:
+            return torch.tensor(0.0, device=predictions.device, requires_grad=True)
+
+        corrs = []
+        for t in range(2):
+            w = torch.abs(target_flat[:, t]).clamp(min=self.eps)
+            corr = self._weighted_pearson(pred_flat[:, t], target_flat[:, t], w)
+            corrs.append(corr)
+
+        avg_corr = (corrs[0] + corrs[1]) / 2.0
+
+        # Negate: we minimize loss, but want to maximize correlation
+        return -avg_corr
+
+
+class PearsonCombinedLoss(nn.Module):
+    """Hybrid loss: alpha * CombinedLoss + (1 - alpha) * (1 - weighted_corr).
+
+    Blends stable MSE-based gradients with metric-aligned Pearson signal.
+    Default alpha=0.6 gives 60% CombinedLoss + 40% Pearson alignment.
+    """
+
+    def __init__(
+        self,
+        alpha: float = 0.6,
+        weighted_ratio: float = 0.62,
+        eps: float = 1e-6,
+        target_weights: Optional[list] = None,
+    ):
+        super().__init__()
+        self.alpha = alpha
+        self.combined = CombinedLoss(
+            weighted_ratio=weighted_ratio, target_weights=target_weights,
+        )
+        self.pearson = WeightedPearsonLoss(eps=eps)
+
+    def forward(
+        self,
+        predictions: torch.Tensor,
+        targets: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        combined_loss = self.combined(predictions, targets, mask)
+        pearson_loss = self.pearson(predictions, targets, mask)
+        # pearson_loss is -corr, so (1 - corr) = 1 + pearson_loss
+        return self.alpha * combined_loss + (1.0 - self.alpha) * (1.0 + pearson_loss)
+
+
 class HuberWeightedLoss(nn.Module):
     """Weighted Huber loss for robust training.
     

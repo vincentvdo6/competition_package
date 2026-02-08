@@ -1,7 +1,13 @@
 """Loss function factory for training."""
 
 import torch.nn as nn
-from src.evaluation.metrics import WeightedMSELoss, CombinedLoss, HuberWeightedLoss
+from src.evaluation.metrics import (
+    WeightedMSELoss,
+    CombinedLoss,
+    HuberWeightedLoss,
+    WeightedPearsonLoss,
+    PearsonCombinedLoss,
+)
 
 
 def get_loss_function(config: dict) -> nn.Module:
@@ -29,5 +35,16 @@ def get_loss_function(config: dict) -> nn.Module:
     elif loss_type == 'huber':
         delta = training_cfg.get('huber_delta', 1.0)
         return HuberWeightedLoss(delta=delta)
+    elif loss_type == 'weighted_pearson':
+        eps = float(training_cfg.get('pearson_eps', 1e-6))
+        return WeightedPearsonLoss(eps=eps)
+    elif loss_type == 'pearson_combined':
+        alpha = float(training_cfg.get('pearson_alpha', 0.6))
+        ratio = float(training_cfg.get('weighted_ratio', 0.62))
+        eps = float(training_cfg.get('pearson_eps', 1e-6))
+        return PearsonCombinedLoss(
+            alpha=alpha, weighted_ratio=ratio, eps=eps,
+            target_weights=target_weights,
+        )
     else:
         raise ValueError(f"Unknown loss type: {loss_type}")

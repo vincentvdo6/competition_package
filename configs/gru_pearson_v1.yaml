@@ -1,0 +1,43 @@
+# GRU + hybrid Pearson loss (metric-aligned training)
+# Base: gru_derived_tightwd_v2 (best GRU config)
+# Change: loss=pearson_combined (60% CombinedLoss + 40% Pearson), lower LR for stability
+
+model:
+  type: gru
+  input_size: 42
+  hidden_size: 144
+  num_layers: 2
+  dropout: 0.22
+  output_size: 2
+
+training:
+  lr: 0.0005
+  weight_decay: 5e-5
+  epochs: 35
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 8
+  loss: pearson_combined
+  pearson_alpha: 0.6
+  weighted_ratio: 0.62
+  pearson_eps: 1e-6
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 3
+    min_lr: 1e-6
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: true
+  derived_features: true
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5
