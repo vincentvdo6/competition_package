@@ -229,7 +229,16 @@ def _prepare_model_specs(
 
 
 def generate_ensemble_solution() -> str:
-    """Generate self-contained solution.py using ensemble_config.json at runtime."""
+    """Generate optimized self-contained solution.py.
+
+    Optimizations vs original:
+    1. Feature caching: compute_derived once per step, cache normalized tensors
+       by (data_config, normalizer) key so identical pipelines run once.
+    2. Lazy prediction: skip output_proj (and attention) when need_prediction
+       is False, saving compute on non-scoring steps.
+    3. Single torch.no_grad() context wrapping the full model loop.
+    4. Pre-allocated prediction array instead of list append + np.stack.
+    """
     return """import json
 import os
 
@@ -338,7 +347,7 @@ class GRUModel(nn.Module):
             nn.Linear(self.hidden_size // 2, output_size),
         )
 
-    def forward_step(self, x, hidden=None):
+    def forward_step(self, x, hidden=None, need_pred=True):
         if x.dim() == 1:
             x = x.unsqueeze(0)
         x = x.unsqueeze(1)
@@ -351,6 +360,8 @@ class GRUModel(nn.Module):
         x = self.input_dropout(x)
 
         out, hidden = self.gru(x, hidden)
+        if not need_pred:
+            return None, hidden
         pred = self.output_proj(out.squeeze(1))
         return pred, hidden
 
@@ -385,7 +396,7 @@ class LSTMModel(nn.Module):
             nn.Linear(self.hidden_size // 2, output_size),
         )
 
-    def forward_step(self, x, hidden=None):
+    def forward_step(self, x, hidden=None, need_pred=True):
         if x.dim() == 1:
             x = x.unsqueeze(0)
         x = x.unsqueeze(1)
@@ -400,6 +411,8 @@ class LSTMModel(nn.Module):
         x = self.input_dropout(x)
 
         out, hidden = self.lstm(x, hidden)
+        if not need_pred:
+            return None, hidden
         pred = self.output_proj(out.squeeze(1))
         return pred, hidden
 
@@ -445,7 +458,7 @@ class GRUAttentionModel(nn.Module):
             nn.Linear(self.hidden_size // 2, output_size),
         )
 
-    def forward_step(self, x, hidden=None):
+    def forward_step(self, x, hidden=None, need_pred=True):
         if x.dim() == 1:
             x = x.unsqueeze(0)
         x = x.unsqueeze(1)
@@ -469,6 +482,9 @@ class GRUAttentionModel(nn.Module):
             context = torch.cat([attn_buffer, cur.unsqueeze(1)], dim=1)
             if context.size(1) > self.attention_window:
                 context = context[:, -self.attention_window:, :]
+
+        if not need_pred:
+            return None, (gru_hidden, context.detach())
 
         q = cur.unsqueeze(1)
         attn_out, _ = self.attn(q, context, context, need_weights=False)
@@ -517,10 +533,10 @@ class PredictionModel:
             else:
                 self.temporal_buffers.append(None)
 
-        n_models = len(self.models)
+        self.n_models = len(self.models)
 
         self.weights = np.array(
-            self.cfg.get('weights', [1.0 / n_models] * n_models),
+            self.cfg.get('weights', [1.0 / self.n_models] * self.n_models),
             dtype=np.float32,
         )
 
@@ -535,46 +551,78 @@ class PredictionModel:
 
         self.current_seq_ix = None
 
-    def _model_features(self, raw_state, model_idx):
-        cfg = self.data_cfgs[model_idx]
-        features = raw_state.astype(np.float32)
-
-        use_derived = bool(cfg.get('derived_features', False))
-        use_temporal = bool(cfg.get('temporal_features', False))
-        use_interaction = bool(cfg.get('interaction_features', False))
-
-        if use_derived:
-            features = np.concatenate([features, compute_derived(features)])
-
-        if use_temporal:
-            features = self.temporal_buffers[model_idx].compute_step(features)
-
-        if use_interaction:
-            interactions = compute_interactions(features, has_derived=use_derived)
-            features = np.concatenate([features, interactions])
-
-        features = self.normalizers[model_idx].transform(features.reshape(1, -1)).squeeze(0)
-        return torch.from_numpy(features)
+        # Pre-compute feature cache keys per model.
+        # Models with identical (derived, temporal, interaction, normalizer)
+        # produce identical input tensors and can share cached results.
+        # Temporal models are never cached (stateful per-model buffer).
+        self._feat_cache_keys = []
+        for spec in self.cfg['models']:
+            dcfg = spec['data']
+            if bool(dcfg.get('temporal_features', False)):
+                self._feat_cache_keys.append(None)
+            else:
+                self._feat_cache_keys.append((
+                    bool(dcfg.get('derived_features', False)),
+                    bool(dcfg.get('interaction_features', False)),
+                    spec['normalizer'],
+                ))
 
     def predict(self, data_point):
         if self.current_seq_ix != data_point.seq_ix:
             self.current_seq_ix = data_point.seq_ix
-            self.hiddens = [None] * len(self.models)
+            self.hiddens = [None] * self.n_models
             for tb in self.temporal_buffers:
                 if tb is not None:
                     tb.reset()
 
         raw = data_point.state
+        need_pred = data_point.need_prediction
 
-        preds = []
-        for i, model in enumerate(self.models):
-            x = self._model_features(raw, i)
-            with torch.no_grad():
-                pred, self.hiddens[i] = model.forward_step(x, self.hiddens[i])
-                pred_np = pred.squeeze(0).numpy()
-            preds.append(pred_np)
+        # Pre-compute shared raw features once
+        raw_f32 = raw.astype(np.float32)
+        raw_with_derived = None
+        feat_tensor_cache = {}
+        pred_arr = np.empty((self.n_models, 2), dtype=np.float32)
 
-        pred_arr = np.stack(preds, axis=0)
+        with torch.no_grad():
+            for i in range(self.n_models):
+                cache_key = self._feat_cache_keys[i]
+                if cache_key is not None and cache_key in feat_tensor_cache:
+                    x = feat_tensor_cache[cache_key]
+                else:
+                    cfg = self.data_cfgs[i]
+                    use_derived = bool(cfg.get('derived_features', False))
+                    use_temporal = bool(cfg.get('temporal_features', False))
+                    use_interaction = bool(cfg.get('interaction_features', False))
+
+                    if use_derived:
+                        if raw_with_derived is None:
+                            raw_with_derived = np.concatenate([raw_f32, compute_derived(raw_f32)])
+                        features = raw_with_derived
+                    else:
+                        features = raw_f32
+
+                    if use_temporal:
+                        features = self.temporal_buffers[i].compute_step(features.copy())
+
+                    if use_interaction:
+                        interactions = compute_interactions(features, has_derived=use_derived)
+                        features = np.concatenate([features, interactions])
+
+                    features = self.normalizers[i].transform(features.reshape(1, -1)).squeeze(0)
+                    x = torch.from_numpy(features)
+
+                    if cache_key is not None:
+                        feat_tensor_cache[cache_key] = x
+
+                pred, self.hiddens[i] = self.models[i].forward_step(
+                    x, self.hiddens[i], need_pred=need_pred,
+                )
+                if need_pred:
+                    pred_arr[i] = pred.squeeze(0).numpy()
+
+        if not need_pred:
+            return None
 
         if self.target_weights is not None:
             p0 = float(np.dot(self.target_weights['t0'], pred_arr[:, 0]))
@@ -584,8 +632,6 @@ class PredictionModel:
             out = (pred_arr * self.weights.reshape(-1, 1)).sum(axis=0).astype(np.float32)
 
         out = np.clip(out, -6, 6)
-        if not data_point.need_prediction:
-            return None
         return out
 """
 

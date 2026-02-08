@@ -327,3 +327,38 @@
 - Commit and push for Kaggle training
 - Train gru_pearson_v1 seeds 42-44 first (fast signal), then attention seeds 45-46, then attention_pearson if GRU Pearson promising
 - Gate: val_avg >= 0.2620 for pool inclusion
+
+## [2026-02-07] GRU Pearson v1 Training Results
+
+**Source**: Kaggle training (Tesla T4 GPU), configs/gru_pearson_v1.yaml, seeds 42/43/44
+
+### Results
+
+| Seed | Val Avg | Val t0 | Val t1 | Best Epoch |
+|------|---------|--------|--------|------------|
+| 42 | 0.2595 | 0.3591 | 0.1599 | 10 |
+| **43** | **0.2652** | **0.3718** | **0.1586** | 11 |
+| 44 | 0.2610 | 0.3624 | 0.1596 | 10 |
+| **Avg** | **0.2619** | 0.3644 | 0.1594 | — |
+
+### Key Findings
+
+1. **Seed 43 passes gate** (0.2652 >= 0.2620) — enters ensemble candidate pool.
+2. **Seeds 42/44 fail strong gate** (0.2595, 0.2610 < 0.2620). Seed 44 may qualify under conditional gate (t1=0.1596 is strong).
+3. **Average 0.2619 is borderline** — essentially equivalent to tightwd_v2 average. Pearson loss is NOT a clear lift for GRU.
+4. **High seed variance** (0.0057 range, vs ~0.0095 for tightwd_v2). Pearson training variance is moderate.
+5. **Loss spikes** observed (occasional jumps to 10-12 range) — gradient instability from correlation term. Alpha=0.6 blend keeps training viable but not perfectly smooth.
+6. **t1 degrades sharply post-peak** (e.g., seed 42: 0.1345→0.0593 between epochs 8-18). Best epoch is consistently 10-11.
+7. **t1 values notably higher than tightwd_v2** (~0.159 avg vs ~0.135 avg for tightwd_v2). Pearson loss may help t1 specifically.
+8. **t0 values lower than tightwd_v2** (~0.364 avg vs ~0.390 avg). The Pearson term pulls resources from t0 toward t1 equalization.
+
+### Verdict
+- Seed 43 is a strong individual model — include in candidate pool
+- The primary value is **diversity** for ensembling, not raw score lift
+- Proceed with attention Pearson training — attention's richer capacity may benefit more from metric alignment
+- t1 improvement is notable and may help ensemble t1 specifically
+
+### Action
+- Include seed 43 in candidate pool
+- Run attention Pearson (Cell 4) on Kaggle
+- Await attention clean seeds 45/46 results and gru5_attn3_uniform8 LB score

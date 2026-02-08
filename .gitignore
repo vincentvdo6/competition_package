@@ -22,7 +22,9 @@ venv/
 logs/*.pt
 logs/*.ckpt
 logs/*.npz
+logs/slim/
 *.onnx
+*.jsonl
 !example_solution/baseline.onnx
 
 # Model weights & submission zips (anywhere in repo)
