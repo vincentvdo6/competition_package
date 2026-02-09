@@ -65,6 +65,7 @@ ZIPS = {
     "slim_pearson": DOWNLOADS / "slim_checkpoints_pearson.zip",
     "attn_nb07": DOWNLOADS / "attn_seeds_45_46_47.zip",
     "attn_nb07_s2": DOWNLOADS / "attn_seeds_48_49_50.zip",
+    "attn_nb07_s3": DOWNLOADS / "attn_seeds_51_52.zip",
 }
 
 # ---------------------------------------------------------------------------
@@ -138,6 +139,12 @@ _reg("attn_nb07_s49", "attn_nb07_s2", "attn_clean_seed49.pt",
      "normalizer_attn_clean_seed49.npz", "gru_attention_clean_v1", "gru_attention", val=0.2560)
 _reg("attn_nb07_s50", "attn_nb07_s2", "attn_clean_seed50.pt",
      "normalizer_attn_clean_seed50.npz", "gru_attention_clean_v1", "gru_attention", val=0.2752)
+
+# --- From attn_seeds_51_52.zip (notebook 07 session 3, combined loss) ---
+_reg("attn_nb07_s51", "attn_nb07_s3", "attn_clean_seed51.pt",
+     "normalizer_attn_clean_seed51.npz", "gru_attention_clean_v1", "gru_attention", val=0.2600)
+_reg("attn_nb07_s52", "attn_nb07_s3", "attn_clean_seed52.pt",
+     "normalizer_attn_clean_seed52.npz", "gru_attention_clean_v1", "gru_attention", val=0.2641)
 
 # ---------------------------------------------------------------------------
 # Named ensembles (presets)

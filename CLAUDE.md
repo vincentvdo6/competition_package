@@ -107,6 +107,23 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | gru_tightwd_v2_seed49 | 0.2577 | combined | 49 |
 | gru_tightwd_v2_seed52 | 0.2537 | combined | 52 |
 
+### Expanded Attention Pool (val scores from notebook 07 + original training)
+| Model | Val Score | Source | Seed |
+|-------|----------|--------|------|
+| **attn_clean_seed50** | **0.2752** | nb07 session 2 | 50 |
+| attn_clean_seed48 | 0.2706 | nb07 session 2 | 48 |
+| attn_clean_seed46 | 0.2659 | nb07 session 1 | 46 |
+| attn_clean_seed52 | 0.2641 | nb07 session 3 | 52 |
+| attn_clean_seed51 | 0.2600 | nb07 session 3 | 51 |
+| attn_clean_seed45 | 0.2599 | nb07 session 1 | 45 |
+| attn_clean_seed47 | 0.2598 | nb07 session 1 | 47 |
+| attn_clean_seed49 | 0.2560 | nb07 session 2 | 49 |
+| attn_clean_seed42 | — | original | 42 |
+| attn_clean_seed43 | — | original | 43 |
+| attn_clean_seed44 | — | original | 44 |
+
+All use combined loss (gru_attention_clean_v1 config). Zips: attn_seeds_45_46_47.zip, attn_seeds_48_49_50.zip, attn_seeds_51_52.zip.
+
 ---
 
 ## Calibrated Timing Data
@@ -227,7 +244,7 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 1. **Latency-aware blend optimization** — local validation running (validate_ensemble_local.py), greedy search with time-budget constraint + low correlation. ~done.
 2. **Dynamic quantization** — INT8 quantization on CPU, est. 1.2-1.6x speedup, unlocks +2-3 more models. Fast/low-risk.
 3. **Recency-weighted GRU retrain** — weight later timesteps more heavily in loss. Same architecture, new objective.
-4. **Scale attention seeds** — train combined-loss attention seeds 45-52 on Kaggle (only have 3: 42-44).
+4. **Scale attention seeds** — DONE! All 11 seeds trained (42-52). Running local inference now (~3h). Best: seed50 val 0.2752.
 
 ### Next Week
 5. **Proxy microstructure features** — queue imbalance, microprice, spread slope, OFI proxy. Strict ablation, kill fast if no lift.
