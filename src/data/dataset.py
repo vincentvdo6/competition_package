@@ -13,6 +13,7 @@ from typing import Tuple, Dict, Optional, List
 from .preprocessing import (
     DerivedFeatureBuilder,
     InteractionFeatureBuilder,
+    MicrostructureFeatureBuilder,
     Normalizer,
     TemporalDerivedFeatureBuilder,
 )
@@ -41,10 +42,12 @@ class LOBSequenceDataset(Dataset):
         derived_features: bool = False,
         temporal_features: bool = False,
         interaction_features: bool = False,
+        microstructure_features: bool = False,
     ):
         self.derived_features = derived_features
         self.temporal_features = temporal_features and derived_features  # temporal requires derived
         self.interaction_features = interaction_features
+        self.microstructure_features = microstructure_features
         self.df = pd.read_parquet(parquet_path)
         self.seq_ids = np.sort(self.df['seq_ix'].unique())
         n_seqs = len(self.seq_ids)
@@ -82,6 +85,11 @@ class LOBSequenceDataset(Dataset):
                 features_all, has_derived=self.derived_features
             )
             features_all = np.concatenate([features_all, interactions], axis=-1)
+
+        # Microstructure features (OFI, QI slope, spread dynamics, realized vol)
+        if self.microstructure_features:
+            micro = MicrostructureFeatureBuilder.compute_batch(features_all)
+            features_all = np.concatenate([features_all, micro], axis=-1)
 
         n_features = features_all.shape[-1]
 
@@ -124,6 +132,7 @@ def create_dataloaders(
     derived_features: bool = False,
     temporal_features: bool = False,
     interaction_features: bool = False,
+    microstructure_features: bool = False,
 ) -> Tuple[DataLoader, DataLoader, Optional[Normalizer]]:
     """Create train and validation dataloaders with shared normalizer.
 
@@ -135,6 +144,7 @@ def create_dataloaders(
         train_path, normalize=normalize, derived_features=derived_features,
         temporal_features=temporal_features,
         interaction_features=interaction_features,
+        microstructure_features=microstructure_features,
     )
 
     valid_dataset = LOBSequenceDataset(
@@ -144,6 +154,7 @@ def create_dataloaders(
         derived_features=derived_features,
         temporal_features=temporal_features,
         interaction_features=interaction_features,
+        microstructure_features=microstructure_features,
     )
 
     train_loader = DataLoader(

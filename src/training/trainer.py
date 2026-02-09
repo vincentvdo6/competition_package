@@ -102,6 +102,17 @@ class Trainer:
         self.experiment_log = os.path.join(self.log_dir, 'experiments.jsonl')
         os.makedirs(self.log_dir, exist_ok=True)
 
+        # Recency weighting: compute temporal weight tensor once
+        recency_cfg = train_cfg.get('recency_weighting', {})
+        if recency_cfg.get('enabled', False):
+            self.temporal_weights = self._compute_temporal_weights(recency_cfg).to(device)
+            print(f"Recency weighting: {recency_cfg.get('type', 'linear')} "
+                  f"w=[{recency_cfg.get('w_min', 1.0)}, {recency_cfg.get('w_max', 2.0)}] "
+                  f"steps [{recency_cfg.get('start_step', 99)}, {recency_cfg.get('end_step', 999)}]",
+                  flush=True)
+        else:
+            self.temporal_weights = None
+
         # Early stopping state
         self.best_score = -float('inf')
         self.epochs_without_improvement = 0
@@ -127,7 +138,11 @@ class Trainer:
 
             with autocast('cuda', enabled=self.use_amp):
                 predictions, _ = self.model(features)
-                loss = self.loss_fn(predictions, targets, mask)
+                if self.temporal_weights is not None:
+                    loss = self.loss_fn(predictions, targets, mask,
+                                        temporal_weights=self.temporal_weights)
+                else:
+                    loss = self.loss_fn(predictions, targets, mask)
 
             self.scaler.scale(loss).backward()
 
@@ -339,3 +354,42 @@ class Trainer:
         with open(history_path, 'w') as f:
             json.dump(serializable, f, indent=2)
         print(f"Training history saved to {history_path}")
+
+    @staticmethod
+    def _compute_temporal_weights(recency_cfg: dict) -> torch.Tensor:
+        """Compute per-timestep weights for recency-weighted loss.
+
+        Args:
+            recency_cfg: dict with keys: type, w_min, w_max, start_step, end_step
+
+        Returns:
+            Tensor of shape (1000,) with weights per timestep.
+        """
+        seq_len = 1000
+        w_min = float(recency_cfg.get('w_min', 1.0))
+        w_max = float(recency_cfg.get('w_max', 2.0))
+        start_step = int(recency_cfg.get('start_step', 99))
+        end_step = int(recency_cfg.get('end_step', 999))
+        ramp_type = recency_cfg.get('type', 'linear')
+
+        weights = torch.ones(seq_len)
+        span = max(end_step - start_step, 1)
+
+        for t in range(seq_len):
+            if t < start_step:
+                # Masked steps get weight 1.0 (mask handles exclusion)
+                weights[t] = 1.0
+            else:
+                u = min((t - start_step) / span, 1.0)
+                if ramp_type == 'exponential':
+                    # Exponential ramp: w_min at u=0, w_max at u=1
+                    import math
+                    weights[t] = w_min * (w_max / w_min) ** u
+                elif ramp_type == 'step':
+                    # Step function: w_min for first half, w_max for second half
+                    weights[t] = w_max if u >= 0.5 else w_min
+                else:
+                    # Linear ramp (default)
+                    weights[t] = w_min + (w_max - w_min) * u
+
+        return weights

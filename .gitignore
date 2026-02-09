@@ -33,6 +33,9 @@ logs/slim/
 *.zip
 submissions/
 
+# Prediction cache (validate_ensemble_local.py)
+cache/
+
 # Large data files
 datasets/
 !datasets/.gitkeep

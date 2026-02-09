@@ -25,6 +25,13 @@ Claude Code and Codex are **equal contributors**. Neither has dominance. Codex i
 4. **Review**: Route changes back to Codex for review before declaring done
 5. **Iterate**: Fix any issues Codex flags
 
+### Codex MCP Call Optimization (MANDATORY)
+Codex reads the entire codebase if you let it. Always use these parameters:
+- **`sandbox: "read-only"`** — prevents shell commands
+- **`base-instructions: "Answer from the prompt only. Do NOT read or explore any files. Be concise."`** — prevents codebase exploration
+- **Prompts must be under 150 words.** Include only the essential context inline — don't make Codex go find it.
+- **Request specific output format** (e.g., "3-5 bullets", "yes/no + 1 sentence", "table format")
+
 ### Rules
 - **When in doubt, consult Codex.** Better to over-consult than to miss something.
 - Do NOT assume what Codex would say. Actually ask via MCP.
@@ -62,36 +69,43 @@ Claude Code and Codex are **equal contributors**. Neither has dominance. Codex i
 
 ---
 
-## Current State (as of 2026-02-07)
+## Current State (as of 2026-02-08)
 
 ### Leaderboard Scores
 | Submission | Score | Models | Time | Status |
 |-----------|-------|--------|------|--------|
 | Single tightwd_v2 | 0.2580 | 1 GRU | ~319s | Baseline |
 | 5-seed GRU uniform | 0.2614 | 5 GRU | ~1595s | Seed diversity |
-| 5 GRU + 2 attn 70/30 | **0.2633** | 7 (5G+2A) | ~3463s | **CHAMPION** |
+| 5 GRU + 2 attn 70/30 (old seeds) | 0.2633 | 7 (5G+2A) | ~3463s | Previous champion |
 | 5 GRU + 3 attn uniform | TIMEOUT | 8 (5G+3A) | >4200s | Failed |
-| 5 GRU + 3 attn OPTIMIZED | PENDING | 8 (5G+3A) | ~4185s est | Borderline |
-
-### Training In Progress
-Kaggle notebook `05_retrain_pearson_models.ipynb` is running (currently on cell 3 of 6):
-- Cell 1: 3x gru_pearson_v1 seeds 42-44 (DONE)
-- Cell 2: 2x gru_attention_clean_v1 seeds 45-46 (DONE)
-- Cell 3: 2x gru_attention_pearson_v1 seeds 42-43 (IN PROGRESS)
-- Cell 4-6: Strip checkpoints, zip, print scores (PENDING)
-
-Output will be: `slim_checkpoints_pearson.zip` containing 7 new models.
+| 5 GRU + 3 attn OPTIMIZED | 0.2624 | 8 (5G+3A) | ~4185s | Below champion |
+| balanced7 (5G+2A pearson attn) | 0.2615 | 7 (5G+2A) | ~3311s | Pearson attn HURTS |
+| **champion_clone_v2** | **0.2654** | 7 (5G+2A) | ~3311s | **CHAMPION** — best 5 GRU by val + old combined attn 70/30 |
 
 ### Available Checkpoints
 **In downloaded zips (C:\Users\Vincent\Downloads\):**
 - `gru5_attn3_uniform8.zip` — 5 GRU tightwd_v2 (seeds 42-46) + 3 attn clean (seeds 42-44), all combined loss, slim
 - `gru5_plus_attention2_balanced7030.zip` — 5 GRU + 2 attn, 70/30 weights (champion)
 - `tightwd5_uniform.zip` — 5 GRU tightwd_v2 only, full checkpoints (not slim)
+- `slim_checkpoints_pearson.zip` — 3 GRU pearson (42-44) + 2 attn clean (45-46) + 2 attn pearson (42-43)
+- `gru_seed_expansion.zip` — 7 tightwd_v2 (47-53) + 6 pearson_v1 (45-50), all slim
 
-**Being trained (will download as slim_checkpoints_pearson.zip):**
-- 3x gru_pearson_v1 (seeds 42-44) — pearson_combined loss
-- 2x gru_attention_clean_v1 (seeds 45-46) — combined loss
-- 2x gru_attention_pearson_v1 (seeds 42-43) — pearson_combined loss
+### Expanded GRU Pool (val scores from notebook 06)
+| Model | Val Score | Config | Seed |
+|-------|----------|--------|------|
+| gru_pearson_v1_seed47 | **0.2668** | pearson_combined | 47 |
+| gru_tightwd_v2_seed50 | **0.2654** | combined | 50 |
+| gru_tightwd_v2_seed48 | **0.2649** | combined | 48 |
+| gru_pearson_v1_seed45 | **0.2648** | pearson_combined | 45 |
+| gru_pearson_v1_seed50 | **0.2640** | pearson_combined | 50 |
+| gru_tightwd_v2_seed51 | 0.2637 | combined | 51 |
+| gru_tightwd_v2_seed53 | 0.2636 | combined | 53 |
+| gru_pearson_v1_seed46 | 0.2634 | pearson_combined | 46 |
+| gru_tightwd_v2_seed47 | 0.2620 | combined | 47 |
+| gru_pearson_v1_seed49 | 0.2603 | pearson_combined | 49 |
+| gru_pearson_v1_seed48 | 0.2589 | pearson_combined | 48 |
+| gru_tightwd_v2_seed49 | 0.2577 | combined | 49 |
+| gru_tightwd_v2_seed52 | 0.2537 | combined | 52 |
 
 ---
 
@@ -120,9 +134,9 @@ Output will be: `slim_checkpoints_pearson.zip` containing 7 new models.
 | diverse12 | 12 | 8 GRU, 4 attn | 5997s | -43% | **TIMEOUT** |
 
 ### Recommendation
-- **Primary**: `balanced7` (5 GRU combined + 2 attn pearson) — same count as champion, adds loss diversity, 21% margin
-- **Alternative**: `fast8_gru` (5 GRU combined + 3 GRU pearson) — more models, no attention overhead, 40% margin
-- **Risky**: `diverse9` — max diversity but only 6% margin
+- **Primary**: `champion_clone_v2` — best 5 GRU (by val) + 2 old combined attn, 70/30 weights (same structure as champion with upgraded GRUs)
+- **Alternative**: `fast8_gru` (8 GRU-only, loss diversity) — more models, no attention overhead, 40% margin
+- **Avoid**: Pearson attention models in ensembles (tested, hurts)
 
 ---
 
@@ -136,6 +150,7 @@ Output will be: `slim_checkpoints_pearson.zip` containing 7 new models.
 - **Seed diversity** is critical (0.0095 gap between identical runs)
 - **Uniform weights > optimized weights** on LB consistently
 - **Architecture diversity** helps (+0.0019 LB from adding attention to GRU ensemble)
+- **GRU-dominant weighting (~70%) is critical** — 8-model uniform (62.5% GRU) scored 0.2624, worse than 7-model 70/30 (71% GRU) at 0.2633
 
 ### What Doesn't Work
 - Temporal features HURT performance
@@ -144,12 +159,15 @@ Output will be: `slim_checkpoints_pearson.zip` containing 7 new models.
 - Optimized ensemble weights (SLSQP, per-target) underperform uniform on LB
 - Ring buffer SLOWER than torch.cat on CPU (indexed write overhead)
 - t1-focused loss weighting HURTS
+- **Pearson-loss attention models HURT ensemble** — balanced7 (0.2615) barely beat 5-GRU-only (0.2614)
 
 ### Untested Hypotheses
-- Loss diversity (combined + pearson models in same ensemble) — NEW, being tested
+- Dynamic quantization (INT8) — est. 1.2-1.6x speedup on CPU, unlocks +2-3 models
 - ONNX Runtime inference — could be 2-5x faster than PyTorch on CPU
 - Reduced attention_window (128 -> 64) — halves attention cost
 - torch.jit.script compilation — potential 10-30% CPU speedup
+- Recency-weighted loss — weight later timesteps more heavily in training
+- Distilled student — 1 tiny model trained on ensemble soft targets + true labels
 
 ---
 
@@ -172,6 +190,7 @@ Output will be: `slim_checkpoints_pearson.zip` containing 7 new models.
 | evaluate.py | Local evaluation on valid set |
 | validate_online_parity.py | Verify step-by-step matches batch inference |
 | score_ensemble_candidates.py | Score ensemble combinations |
+| validate_ensemble_local.py | Cache per-model predictions, greedy/exhaustive ensemble search, diversity analysis |
 
 ### Source Code (src/)
 - `src/models/gru_baseline.py` — GRU with input projection + LayerNorm + output MLP
@@ -190,21 +209,30 @@ Output will be: `slim_checkpoints_pearson.zip` containing 7 new models.
 | 02_feature_analysis.ipynb | Complete — feature importance |
 | 03_hp_optimization.ipynb | Complete — HP sweep results |
 | 04_seed_diversity_analysis.ipynb | Complete — seed variance analysis |
-| 05_retrain_pearson_models.ipynb | **ACTIVE on Kaggle** — training 7 new pearson models |
+| 05_retrain_pearson_models.ipynb | Complete — 7 pearson models trained |
+| 06_gru_seed_expansion.ipynb | Complete — 13 new GRU models (7 tightwd + 6 pearson) |
 
 ---
 
 ## Immediate Next Steps
 
-1. **Wait** for Kaggle training to finish (~44 min remaining for cell 3, then cells 4-6 are fast)
-2. **Download** `slim_checkpoints_pearson.zip` from Kaggle output
-3. **Check** optimized 8-model submission result (borderline, may timeout)
-4. **Build** ensemble with `build_mixed_ensemble.py`:
-   ```
-   python scripts/build_mixed_ensemble.py --new-zip <path> --preset balanced7
-   ```
-5. **Submit** the zip and evaluate LB score
-6. **Iterate** based on results — try other presets, investigate ONNX/JIT speedups for more models
+### champion_clone_v2 = 0.2654 (CHAMPION)
+- GRUs (0.14 each, 70% total): pearson_v1_seed47 (0.2668), tightwd_v2_seed50 (0.2654), tightwd_v2_seed48 (0.2649), pearson_v1_seed45 (0.2648), pearson_v1_seed50 (0.2640)
+- Attention (0.15 each, 30% total): attn_clean_seed42, attn_clean_seed43 (both combined loss, from gru5_attn3_uniform8.zip model_5/model_6)
+
+### Target: 0.2761 (133rd place, +0.0107 gap)
+- 133rd through 305th all share this score
+
+### This Week (Codex-agreed, ROI-ordered)
+1. **Latency-aware blend optimization** — local validation running (validate_ensemble_local.py), greedy search with time-budget constraint + low correlation. ~done.
+2. **Dynamic quantization** — INT8 quantization on CPU, est. 1.2-1.6x speedup, unlocks +2-3 more models. Fast/low-risk.
+3. **Recency-weighted GRU retrain** — weight later timesteps more heavily in loss. Same architecture, new objective.
+4. **Scale attention seeds** — train combined-loss attention seeds 45-52 on Kaggle (only have 3: 42-44).
+
+### Next Week
+5. **Proxy microstructure features** — queue imbalance, microprice, spread slope, OFI proxy. Strict ablation, kill fast if no lift.
+6. **Distilled student** — 1 tiny GRU trained on ensemble soft targets + true labels. Frees time budget.
+7. **Stateful TCN** — tiny causal TCN with cached conv buffers. Moonshot only if time permits.
 
 ---
 

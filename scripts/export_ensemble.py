@@ -148,6 +148,9 @@ def _expected_input_size(data_cfg: dict) -> int:
         n += 3
     if interaction:
         n += 3
+    microstructure = bool(data_cfg.get("microstructure_features", False))
+    if microstructure:
+        n += 6
     return n
 
 
@@ -177,7 +180,7 @@ def _prepare_model_specs(
         data_cfg = cfg.get("data", {})
 
         model_type = model_cfg.get("type", "gru")
-        if model_type not in {"gru", "lstm", "gru_attention"}:
+        if model_type not in {"gru", "lstm", "gru_attention", "tcn"}:
             raise ValueError(f"Unsupported model type '{model_type}' in {cfg_path}")
 
         model_cfg_clean = {
@@ -190,16 +193,22 @@ def _prepare_model_specs(
             "attention_heads": int(model_cfg.get("attention_heads", 4)),
             "attention_dropout": float(model_cfg.get("attention_dropout", 0.1)),
             "attention_window": int(model_cfg.get("attention_window", 128)),
+            # TCN-specific
+            "hidden_channels": int(model_cfg.get("hidden_channels", 32)),
+            "kernel_size": int(model_cfg.get("kernel_size", 3)),
+            "dilations": model_cfg.get("dilations", [1, 2, 4, 8, 16, 32]),
         }
 
         derived = bool(data_cfg.get("derived_features", False))
         temporal = bool(data_cfg.get("temporal_features", False) and derived)
         interaction = bool(data_cfg.get("interaction_features", False))
+        microstructure = bool(data_cfg.get("microstructure_features", False))
 
         data_cfg_clean = {
             "derived_features": derived,
             "temporal_features": temporal,
             "interaction_features": interaction,
+            "microstructure_features": microstructure,
         }
 
         expected_size = _expected_input_size(data_cfg_clean)
@@ -305,6 +314,48 @@ class TemporalBuffer:
             features_42,
             np.array([roc1, roc5, roll_mean], dtype=np.float32),
         ]).astype(np.float32)
+
+
+class MicrostructureBuffer:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.prev_p = None
+        self.prev_v = None
+
+    def compute_step(self, features, eps=1e-8):
+        p = features[0:12].astype(np.float64)
+        v = features[12:24].astype(np.float64)
+        dp = features[24:28].astype(np.float64)
+        dv = features[28:32].astype(np.float64)
+        micro = np.zeros(6, dtype=np.float32)
+        if self.prev_p is None:
+            self.prev_p = p.copy()
+            self.prev_v = v.copy()
+        else:
+            pp, pv = self.prev_p, self.prev_v
+            ofi = np.zeros(6, dtype=np.float64)
+            for l in range(6):
+                eb = (v[l] if p[l] >= pp[l] else 0) - (pv[l] if p[l] <= pp[l] else 0)
+                ea = (v[l+6] if p[l+6] <= pp[l+6] else 0) - (pv[l+6] if p[l+6] >= pp[l+6] else 0)
+                ofi[l] = eb - ea
+            dw = np.array([1.0 / (l + 1) for l in range(6)])
+            micro[0] = float((ofi * dw).sum())
+            micro[1] = float(ofi[:3].mean() - ofi[3:].mean())
+            s0 = p[6] - p[0]; s0p = pp[6] - pp[0]; ds = s0 - s0p
+            vi = (v[6] - v[0]) / (v[0] + v[6] + eps)
+            micro[3] = float(ds * vi)
+            s1 = p[7] - p[1]; s1p = pp[7] - pp[1]
+            micro[4] = float((s1 - s0) - (s1p - s0p))
+            self.prev_p = p.copy()
+            self.prev_v = v.copy()
+        qi = np.zeros(6, dtype=np.float64)
+        for l in range(6):
+            qi[l] = (v[l] - v[l+6]) / (v[l] + v[l+6] + eps)
+        micro[2] = float(np.diff(qi).mean() * 5.0)
+        micro[5] = float(np.sqrt((dp ** 2 * (1 + np.abs(dv))).sum() + eps))
+        return np.concatenate([features, micro]).astype(np.float32)
 
 
 class Normalizer:
@@ -493,6 +544,69 @@ class GRUAttentionModel(nn.Module):
         return pred, (gru_hidden, context.detach())
 
 
+class TCNResBlock(nn.Module):
+    def __init__(self, ch, ks, dil):
+        super().__init__()
+        self.ch = ch
+        self.ks = ks
+        self.dil = dil
+        self.buf_len = (ks - 1) * dil + 1
+        self.dw = nn.Conv1d(ch, ch, ks, dilation=dil, groups=ch, bias=True)
+        self.act = nn.SiLU()
+        self.pw = nn.Conv1d(ch, ch, 1, bias=True)
+
+    def forward_step(self, x, buf, ptr):
+        buf[:, :, ptr] = x
+        taps = []
+        for i in range(self.ks):
+            taps.append(buf[:, :, (ptr - i * self.dil) % self.buf_len])
+        stack = torch.stack(list(reversed(taps)), dim=2)
+        out = torch.nn.functional.conv1d(
+            stack, self.dw.weight, self.dw.bias, groups=self.ch
+        ).squeeze(2)
+        out = self.act(out)
+        out = torch.nn.functional.conv1d(
+            out.unsqueeze(2), self.pw.weight, self.pw.bias
+        ).squeeze(2)
+        return out + x, buf, (ptr + 1) % self.buf_len
+
+
+class TCNModel(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        ch = int(cfg.get('hidden_channels', 32))
+        ks = int(cfg.get('kernel_size', 3))
+        dils = cfg.get('dilations', [1, 2, 4, 8, 16, 32])
+        input_size = int(cfg.get('input_size', 42))
+        output_size = int(cfg.get('output_size', 2))
+        self.ch = ch
+        self.input_proj = nn.Linear(input_size, ch)
+        self.blocks = nn.ModuleList([TCNResBlock(ch, ks, d) for d in dils])
+        self.out_norm = nn.LayerNorm(ch)
+        self.out_head = nn.Linear(ch, output_size)
+
+    def forward_step(self, x, hidden=None, need_pred=True):
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+        bs = x.shape[0]
+        if hidden is None:
+            hidden = [
+                (torch.zeros(bs, self.ch, b.buf_len, device=x.device), 0)
+                for b in self.blocks
+            ]
+        x = self.input_proj(x)
+        new_hidden = []
+        for i, block in enumerate(self.blocks):
+            buf, ptr = hidden[i]
+            x, buf, new_ptr = block.forward_step(x, buf, ptr)
+            new_hidden.append((buf, new_ptr))
+        if not need_pred:
+            return None, new_hidden
+        x = self.out_norm(x)
+        pred = self.out_head(x)
+        return pred, new_hidden
+
+
 def build_model(model_cfg):
     model_type = model_cfg.get('type', 'gru')
     if model_type == 'gru':
@@ -501,6 +615,8 @@ def build_model(model_cfg):
         return LSTMModel(model_cfg)
     if model_type == 'gru_attention':
         return GRUAttentionModel(model_cfg)
+    if model_type == 'tcn':
+        return TCNModel(model_cfg)
     raise ValueError(f'Unsupported model type: {model_type}')
 
 
@@ -516,6 +632,7 @@ class PredictionModel:
         self.normalizers = []
         self.data_cfgs = []
         self.temporal_buffers = []
+        self.micro_buffers = []
 
         for spec in self.cfg['models']:
             model = build_model(spec['model'])
@@ -532,6 +649,11 @@ class PredictionModel:
                 self.temporal_buffers.append(TemporalBuffer())
             else:
                 self.temporal_buffers.append(None)
+
+            if bool(spec['data'].get('microstructure_features', False)):
+                self.micro_buffers.append(MicrostructureBuffer())
+            else:
+                self.micro_buffers.append(None)
 
         self.n_models = len(self.models)
 
@@ -558,7 +680,7 @@ class PredictionModel:
         self._feat_cache_keys = []
         for spec in self.cfg['models']:
             dcfg = spec['data']
-            if bool(dcfg.get('temporal_features', False)):
+            if bool(dcfg.get('temporal_features', False)) or bool(dcfg.get('microstructure_features', False)):
                 self._feat_cache_keys.append(None)
             else:
                 self._feat_cache_keys.append((
@@ -574,6 +696,9 @@ class PredictionModel:
             for tb in self.temporal_buffers:
                 if tb is not None:
                     tb.reset()
+            for mb in self.micro_buffers:
+                if mb is not None:
+                    mb.reset()
 
         raw = data_point.state
         need_pred = data_point.need_prediction
@@ -594,6 +719,7 @@ class PredictionModel:
                     use_derived = bool(cfg.get('derived_features', False))
                     use_temporal = bool(cfg.get('temporal_features', False))
                     use_interaction = bool(cfg.get('interaction_features', False))
+                    use_micro = bool(cfg.get('microstructure_features', False))
 
                     if use_derived:
                         if raw_with_derived is None:
@@ -608,6 +734,9 @@ class PredictionModel:
                     if use_interaction:
                         interactions = compute_interactions(features, has_derived=use_derived)
                         features = np.concatenate([features, interactions])
+
+                    if use_micro:
+                        features = self.micro_buffers[i].compute_step(features.copy())
 
                     features = self.normalizers[i].transform(features.reshape(1, -1)).squeeze(0)
                     x = torch.from_numpy(features)

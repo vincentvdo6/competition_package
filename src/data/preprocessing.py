@@ -163,6 +163,171 @@ class TemporalBuffer:
         return np.concatenate([features_42, temporal]).astype(np.float32)
 
 
+class MicrostructureFeatureBuilder:
+    """Compute LOB microstructure features from raw 32-feature vector.
+
+    Features (6 total):
+    0: wOFI_6 — depth-weighted multi-level order flow imbalance
+    1: OFI_slope — front-of-book vs deep OFI concentration
+    2: QI_slope — queue-imbalance term-structure slope (stateless)
+    3: DirSpreadVel — directional spread velocity
+    4: SpreadTwist — L1 vs L2 spread dynamics change
+    5: RV_vw_4 — volume-weighted short-horizon realized volatility (stateless)
+
+    Features 0,1,3,4 require previous-step values (stateful in online inference).
+    Features 2,5 are stateless.
+    """
+
+    N_MICROSTRUCTURE = 6
+    MICROSTRUCTURE_COLS = [
+        "wOFI_6", "OFI_slope", "QI_slope",
+        "DirSpreadVel", "SpreadTwist", "RV_vw_4",
+    ]
+
+    @staticmethod
+    def compute_batch(features: np.ndarray, eps: float = 1e-8) -> np.ndarray:
+        """Compute microstructure features for full sequences (training).
+
+        Args:
+            features: (n_seqs, seq_len, >=32) raw features
+        Returns:
+            (n_seqs, seq_len, 6) microstructure features
+        """
+        n_seqs, seq_len, _ = features.shape
+        result = np.zeros((n_seqs, seq_len, 6), dtype=np.float32)
+
+        # Extract raw columns
+        p = features[..., 0:12]    # prices p0-p11
+        v = features[..., 12:24]   # volumes v0-v11
+        dp = features[..., 24:28]  # trade price changes
+        dv = features[..., 28:32]  # trade volume changes
+
+        # Previous step values (shift right by 1, first step copies current)
+        p_prev = np.zeros_like(p)
+        p_prev[:, 1:] = p[:, :-1]
+        p_prev[:, 0] = p[:, 0]
+
+        v_prev = np.zeros_like(v)
+        v_prev[:, 1:] = v[:, :-1]
+        v_prev[:, 0] = v[:, 0]
+
+        # Per-level OFI (needed for features 0 and 1)
+        ofi_per_level = np.zeros((n_seqs, seq_len, 6), dtype=np.float32)
+        for lev in range(6):
+            e_bid = (np.where(p[..., lev] >= p_prev[..., lev], v[..., lev], 0.0)
+                     - np.where(p[..., lev] <= p_prev[..., lev], v_prev[..., lev], 0.0))
+            e_ask = (np.where(p[..., lev + 6] <= p_prev[..., lev + 6], v[..., lev + 6], 0.0)
+                     - np.where(p[..., lev + 6] >= p_prev[..., lev + 6], v_prev[..., lev + 6], 0.0))
+            ofi_per_level[..., lev] = e_bid - e_ask
+
+        # Feature 0: Depth-weighted multi-level OFI
+        depth_weights = np.array([1.0 / (lev + 1) for lev in range(6)], dtype=np.float32)
+        result[..., 0] = (ofi_per_level * depth_weights).sum(axis=-1)
+
+        # Feature 1: OFI slope (front vs deep)
+        result[..., 1] = ofi_per_level[..., :3].mean(axis=-1) - ofi_per_level[..., 3:].mean(axis=-1)
+
+        # Feature 2: Queue-imbalance term-structure slope (stateless)
+        qi = np.zeros((n_seqs, seq_len, 6), dtype=np.float32)
+        for lev in range(6):
+            qi[..., lev] = (v[..., lev] - v[..., lev + 6]) / (v[..., lev] + v[..., lev + 6] + eps)
+        qi_diffs = np.diff(qi, axis=-1)  # (n_seqs, seq_len, 5)
+        result[..., 2] = qi_diffs.mean(axis=-1) * 5.0  # scale for visibility
+
+        # Feature 3: Directional spread velocity
+        spread_0 = p[..., 6] - p[..., 0]
+        spread_0_prev = p_prev[..., 6] - p_prev[..., 0]
+        delta_spread = spread_0 - spread_0_prev
+        vol_imb = (v[..., 6] - v[..., 0]) / (v[..., 0] + v[..., 6] + eps)
+        result[..., 3] = delta_spread * vol_imb
+
+        # Feature 4: Spread curve twist (L1 vs L2 dynamics)
+        spread_1 = p[..., 7] - p[..., 1]
+        spread_1_prev = p_prev[..., 7] - p_prev[..., 1]
+        result[..., 4] = (spread_1 - spread_0) - (spread_1_prev - spread_0_prev)
+
+        # Feature 5: Volume-weighted short-horizon realized volatility (stateless)
+        result[..., 5] = np.sqrt((dp ** 2 * (1.0 + np.abs(dv))).sum(axis=-1) + eps)
+
+        return result
+
+
+class MicrostructureBuffer:
+    """Stateful microstructure feature computation for online inference."""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.prev_p: Optional[np.ndarray] = None
+        self.prev_v: Optional[np.ndarray] = None
+
+    def compute_step(self, features: np.ndarray, eps: float = 1e-8) -> np.ndarray:
+        """Compute 6 microstructure features for a single step.
+
+        Args:
+            features: (>=32,) raw (or raw+derived) features
+        Returns:
+            Input array with 6 microstructure columns appended
+        """
+        p = features[0:12].astype(np.float64)
+        v = features[12:24].astype(np.float64)
+        dp = features[24:28].astype(np.float64)
+        dv = features[28:32].astype(np.float64)
+
+        micro = np.zeros(6, dtype=np.float32)
+
+        if self.prev_p is None:
+            # First step: stateful features are 0, stateless computed
+            self.prev_p = p.copy()
+            self.prev_v = v.copy()
+        else:
+            p_prev = self.prev_p
+            v_prev = self.prev_v
+
+            # Per-level OFI
+            ofi_levels = np.zeros(6, dtype=np.float64)
+            for lev in range(6):
+                e_bid = (v[lev] if p[lev] >= p_prev[lev] else 0.0) - \
+                        (v_prev[lev] if p[lev] <= p_prev[lev] else 0.0)
+                e_ask = (v[lev + 6] if p[lev + 6] <= p_prev[lev + 6] else 0.0) - \
+                        (v_prev[lev + 6] if p[lev + 6] >= p_prev[lev + 6] else 0.0)
+                ofi_levels[lev] = e_bid - e_ask
+
+            # Feature 0: wOFI_6
+            depth_w = np.array([1.0 / (lev + 1) for lev in range(6)])
+            micro[0] = float((ofi_levels * depth_w).sum())
+
+            # Feature 1: OFI slope
+            micro[1] = float(ofi_levels[:3].mean() - ofi_levels[3:].mean())
+
+            # Feature 3: Directional spread velocity
+            spread_0 = p[6] - p[0]
+            spread_0_prev = p_prev[6] - p_prev[0]
+            delta_spread = spread_0 - spread_0_prev
+            vol_imb = (v[6] - v[0]) / (v[0] + v[6] + eps)
+            micro[3] = float(delta_spread * vol_imb)
+
+            # Feature 4: Spread curve twist
+            spread_1 = p[7] - p[1]
+            spread_1_prev = p_prev[7] - p_prev[1]
+            micro[4] = float((spread_1 - spread_0) - (spread_1_prev - spread_0_prev))
+
+            self.prev_p = p.copy()
+            self.prev_v = v.copy()
+
+        # Feature 2: QI slope (stateless)
+        qi = np.zeros(6, dtype=np.float64)
+        for lev in range(6):
+            qi[lev] = (v[lev] - v[lev + 6]) / (v[lev] + v[lev + 6] + eps)
+        micro[2] = float(np.diff(qi).mean() * 5.0)
+
+        # Feature 5: RV (stateless)
+        micro[5] = float(np.sqrt((dp ** 2 * (1.0 + np.abs(dv))).sum() + eps))
+
+        return np.concatenate([features, micro]).astype(np.float32)
+
+
 class Normalizer:
     """Z-score normalizer."""
 

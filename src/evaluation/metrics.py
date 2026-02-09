@@ -61,18 +61,20 @@ class WeightedMSELoss(nn.Module):
             self.target_weights = None
     
     def forward(
-        self, 
-        predictions: torch.Tensor, 
+        self,
+        predictions: torch.Tensor,
         targets: torch.Tensor,
-        mask: Optional[torch.Tensor] = None
+        mask: Optional[torch.Tensor] = None,
+        temporal_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Compute weighted MSE loss.
-        
+
         Args:
             predictions: (batch, seq_len, 2) predicted values
             targets: (batch, seq_len, 2) true values
             mask: (batch, seq_len) bool mask for valid predictions
-        
+            temporal_weights: (seq_len,) per-step weights for recency weighting
+
         Returns:
             Scalar loss value
         """
@@ -91,6 +93,11 @@ class WeightedMSELoss(nn.Module):
             # Expand mask to match target dimensions
             mask = mask.unsqueeze(-1).expand_as(weights)
             weights = weights * mask.float()
+
+        # Apply temporal weights for recency weighting
+        if temporal_weights is not None:
+            tw = temporal_weights.view(1, -1, 1).expand_as(weights)
+            weights = weights * tw
 
         # Weighted mean
         loss = (weights * sq_errors).sum() / (weights.sum() + self.eps)
@@ -132,18 +139,20 @@ class CombinedLoss(nn.Module):
             self.target_weights = None
     
     def forward(
-        self, 
-        predictions: torch.Tensor, 
+        self,
+        predictions: torch.Tensor,
         targets: torch.Tensor,
-        mask: Optional[torch.Tensor] = None
+        mask: Optional[torch.Tensor] = None,
+        temporal_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Compute combined loss.
-        
+
         Args:
             predictions: (batch, seq_len, 2) predicted values
             targets: (batch, seq_len, 2) true values
             mask: (batch, seq_len) bool mask for valid predictions
-        
+            temporal_weights: (seq_len,) per-step weights for recency weighting
+
         Returns:
             Scalar loss value
         """
@@ -153,13 +162,22 @@ class CombinedLoss(nn.Module):
             mse_raw = mse_raw * self.target_weights
         if mask is not None:
             mask_expanded = mask.unsqueeze(-1).expand_as(mse_raw)
-            plain_mse = mse_raw[mask_expanded].mean()
+            if temporal_weights is not None:
+                tw = temporal_weights.view(1, -1, 1).expand_as(mse_raw)
+                step_weights = mask_expanded.float() * tw
+                plain_mse = (mse_raw * step_weights).sum() / (step_weights.sum() + 1e-8)
+            else:
+                plain_mse = mse_raw[mask_expanded].mean()
         else:
-            plain_mse = mse_raw.mean()
-        
+            if temporal_weights is not None:
+                tw = temporal_weights.view(1, -1, 1).expand_as(mse_raw)
+                plain_mse = (mse_raw * tw).sum() / (tw.sum() + 1e-8)
+            else:
+                plain_mse = mse_raw.mean()
+
         # Weighted MSE component
-        weighted = self.weighted_mse(predictions, targets, mask)
-        
+        weighted = self.weighted_mse(predictions, targets, mask, temporal_weights)
+
         # Combine
         return (1 - self.weighted_ratio) * plain_mse + self.weighted_ratio * weighted
 
@@ -223,6 +241,7 @@ class WeightedPearsonLoss(nn.Module):
         predictions: torch.Tensor,
         targets: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
+        temporal_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Compute negative weighted Pearson correlation loss.
 
@@ -230,6 +249,7 @@ class WeightedPearsonLoss(nn.Module):
             predictions: (batch, seq_len, 2) predicted values
             targets: (batch, seq_len, 2) true values
             mask: (batch, seq_len) bool mask for valid predictions
+            temporal_weights: accepted for interface compatibility (unused)
 
         Returns:
             Scalar loss = -(corr_t0 + corr_t1) / 2
@@ -287,11 +307,12 @@ class PearsonCombinedLoss(nn.Module):
         predictions: torch.Tensor,
         targets: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
+        temporal_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         # Guard against empty mask (zero valid predictions in batch)
         if mask is not None and mask.sum() == 0:
             return torch.tensor(0.0, device=predictions.device, requires_grad=True)
-        combined_loss = self.combined(predictions, targets, mask)
+        combined_loss = self.combined(predictions, targets, mask, temporal_weights)
         pearson_loss = self.pearson(predictions, targets, mask)
         # pearson_loss is -corr, so (1 - corr) = 1 + pearson_loss
         loss = self.alpha * combined_loss + (1.0 - self.alpha) * (1.0 + pearson_loss)
@@ -320,31 +341,37 @@ class HuberWeightedLoss(nn.Module):
         self.eps = eps
     
     def forward(
-        self, 
-        predictions: torch.Tensor, 
+        self,
+        predictions: torch.Tensor,
         targets: torch.Tensor,
-        mask: Optional[torch.Tensor] = None
+        mask: Optional[torch.Tensor] = None,
+        temporal_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Compute weighted Huber loss."""
         # Compute weights from target amplitude
         weights = torch.abs(targets) + self.eps
-        
+
         # Compute absolute errors
         errors = torch.abs(predictions - targets)
-        
+
         # Huber loss: MSE where |error| < delta, MAE otherwise
         huber = torch.where(
             errors < self.delta,
             0.5 * errors ** 2,
             self.delta * (errors - 0.5 * self.delta)
         )
-        
+
         # Apply mask if provided
         if mask is not None:
             mask = mask.unsqueeze(-1).expand_as(weights)
             weights = weights * mask.float()
-        
+
+        # Apply temporal weights for recency weighting
+        if temporal_weights is not None:
+            tw = temporal_weights.view(1, -1, 1).expand_as(weights)
+            weights = weights * tw
+
         # Weighted mean
         loss = (weights * huber).sum() / (weights.sum() + self.eps)
-        
+
         return loss

@@ -17,6 +17,7 @@ from src.data.dataset import create_dataloaders
 from src.models.gru_attention import GRUAttentionModel
 from src.models.gru_baseline import GRUBaseline
 from src.models.lstm_model import LSTMModel
+from src.models.tcn_model import TCNModel
 from src.training.trainer import Trainer, setup_cpu_performance
 from src.training.losses import get_loss_function
 
@@ -47,6 +48,8 @@ def get_model(config: dict) -> torch.nn.Module:
         return GRUAttentionModel(config)
     elif model_type == 'lstm':
         return LSTMModel(config)
+    elif model_type == 'tcn':
+        return TCNModel(config)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -106,9 +109,13 @@ def main():
         feature_dim += 3
     if interaction_features:
         feature_dim += 3
+    microstructure_features = data_cfg.get('microstructure_features', False)
+    if microstructure_features:
+        feature_dim += 6
     print(
         f"Feature pipeline: derived={derived_features}, temporal={temporal_features}, "
-        f"interaction={interaction_features} -> input_size={feature_dim}"
+        f"interaction={interaction_features}, microstructure={microstructure_features} "
+        f"-> input_size={feature_dim}"
     )
     train_loader, valid_loader, normalizer = create_dataloaders(
         train_path=train_path,
@@ -119,6 +126,7 @@ def main():
         derived_features=derived_features,
         temporal_features=temporal_features,
         interaction_features=interaction_features,
+        microstructure_features=microstructure_features,
     )
     print(f"Train batches: {len(train_loader)}, Valid batches: {len(valid_loader)}")
 
