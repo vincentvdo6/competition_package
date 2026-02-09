@@ -66,6 +66,9 @@ ZIPS = {
     "attn_nb07": DOWNLOADS / "attn_seeds_45_46_47.zip",
     "attn_nb07_s2": DOWNLOADS / "attn_seeds_48_49_50.zip",
     "attn_nb07_s3": DOWNLOADS / "attn_seeds_51_52.zip",
+    "gru_expansion_v2": DOWNLOADS / "gru_expansion_v2.zip",
+    "gru_expansion_v3": DOWNLOADS / "gru_expansion_v2 (1).zip",
+    "p1_expansion": DOWNLOADS / "p1_expansion.zip",
 }
 
 # ---------------------------------------------------------------------------
@@ -145,6 +148,39 @@ _reg("attn_nb07_s51", "attn_nb07_s3", "attn_clean_seed51.pt",
      "normalizer_attn_clean_seed51.npz", "gru_attention_clean_v1", "gru_attention", val=0.2600)
 _reg("attn_nb07_s52", "attn_nb07_s3", "attn_clean_seed52.pt",
      "normalizer_attn_clean_seed52.npz", "gru_attention_clean_v1", "gru_attention", val=0.2641)
+
+# --- From gru_expansion_v2.zip (notebook 09, tw2 seeds 54-63) ---
+for seed in range(54, 64):
+    _tw2_v2_vals = {54: 0.2620, 55: 0.2627, 56: 0.2604, 57: 0.2641, 58: 0.2546,
+                    59: 0.2596, 60: 0.2663, 61: 0.2591, 62: 0.2634, 63: 0.2736}
+    _reg(f"gru_tw2_s{seed}", "gru_expansion_v2",
+         f"gru_derived_tightwd_v2_seed{seed}.pt",
+         f"normalizer_gru_derived_tightwd_v2_seed{seed}.npz",
+         "gru_derived_tightwd_v2", val=_tw2_v2_vals.get(seed))
+
+# --- From gru_expansion_v2 (1).zip (notebook 09, tw2 seeds 64-73) ---
+for seed in range(64, 74):
+    _tw2_v3_vals = {64: 0.2601, 65: 0.2655, 66: 0.2651, 67: 0.2633, 68: 0.2616,
+                    69: 0.2577, 70: 0.2602, 71: 0.2618, 72: 0.2566, 73: 0.2613}
+    _reg(f"gru_tw2_s{seed}", "gru_expansion_v3",
+         f"gru_derived_tightwd_v2_seed{seed}.pt",
+         f"normalizer_gru_derived_tightwd_v2_seed{seed}.npz",
+         "gru_derived_tightwd_v2", val=_tw2_v3_vals.get(seed))
+
+# --- From p1_expansion.zip (Colab, p1 seeds 51-90) ---
+for seed in range(51, 91):
+    _p1_vals = {51: 0.2632, 52: 0.2636, 53: 0.2610, 54: 0.2623, 55: 0.2629,
+                56: 0.2681, 57: 0.2647, 58: 0.2610, 59: 0.2672, 60: 0.2617,
+                61: 0.2605, 62: 0.2574, 63: 0.2689, 64: 0.2596, 65: 0.2586,
+                66: 0.2643, 67: 0.2683, 68: 0.2605, 69: 0.2555, 70: 0.2602,
+                71: 0.2611, 72: 0.2620, 73: 0.2581, 74: 0.2610, 75: 0.2609,
+                76: 0.2677, 77: 0.2648, 78: 0.2668, 79: 0.2690, 80: 0.2650,
+                81: 0.2589, 82: 0.2579, 83: 0.2627, 84: 0.2547, 85: 0.2631,
+                86: 0.2672, 87: 0.2685, 88: 0.2594, 89: 0.2658, 90: 0.2642}
+    _reg(f"gru_p1_s{seed}", "p1_expansion",
+         f"gru_pearson_v1_seed{seed}.pt",
+         f"normalizer_gru_pearson_v1_seed{seed}.npz",
+         "gru_pearson_v1", val=_p1_vals.get(seed))
 
 # ---------------------------------------------------------------------------
 # Named ensembles (presets)

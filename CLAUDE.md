@@ -69,122 +69,169 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 
 ---
 
-## Current State (as of 2026-02-08)
+## Current State (as of 2026-02-10)
 
-### Leaderboard Scores
-| Submission | Score | Models | Time | Status |
-|-----------|-------|--------|------|--------|
-| Single tightwd_v2 | 0.2580 | 1 GRU | ~319s | Baseline |
-| 5-seed GRU uniform | 0.2614 | 5 GRU | ~1595s | Seed diversity |
-| 5 GRU + 2 attn 70/30 (old seeds) | 0.2633 | 7 (5G+2A) | ~3463s | Previous champion |
-| 5 GRU + 3 attn uniform | TIMEOUT | 8 (5G+3A) | >4200s | Failed |
-| 5 GRU + 3 attn OPTIMIZED | 0.2624 | 8 (5G+3A) | ~4185s | Below champion |
-| balanced7 (5G+2A pearson attn) | 0.2615 | 7 (5G+2A) | ~3311s | Pearson attn HURTS |
-| **champion_clone_v2** | **0.2654** | 7 (5G+2A) | ~3311s | **CHAMPION** — best 5 GRU by val + old combined attn 70/30 |
+### Leaderboard Scores (all submissions ever)
+| Submission | Score | Models | Time | Notes |
+|-----------|-------|--------|------|-------|
+| Single tightwd_v2 | 0.2580 | 1 GRU | 321s | Baseline |
+| 5-seed GRU uniform | 0.2614 | 5 GRU | 1595s | Seed diversity |
+| balanced7 (pearson attn) | 0.2615 | 5G+2A | 3504s | Pearson attn HURTS |
+| 5 GRU + 3 attn OPTIMIZED | 0.2624 | 5G+3A | 3836s | Too much attn weight |
+| 5 GRU + 2 attn 70/30 (old) | 0.2633 | 5G+2A | 3463s | Old champion |
+| best_gru_combo (exhaustive) | 0.2647 | 5G+2A | 3164s | OVERFITS val |
+| champion_clone_v2 | 0.2654 | 5G+2A | 2925s | Top-5 GRU + old attn |
+| champion_v4_s50swap | 0.2668 | 5G+2A | 2895s | Old champion |
+| **s2_s43_swap** | **0.2675** | **5G+2A** | **3106s** | **CURRENT CHAMPION** |
+| champion_v4_top2attn | TIMEOUT | 5G+2A | 4199s | Server variance |
+| 5 GRU + 3 attn uniform | TIMEOUT | 5G+3A | 4200s | Too many attn |
+| s4_nb07s48_swap | 0.2646 | 5G+2A | 3670s | nb07_s48 worse than s50 |
 
-### Available Checkpoints
-**In downloaded zips (C:\Users\Vincent\Downloads\):**
-- `gru5_attn3_uniform8.zip` — 5 GRU tightwd_v2 (seeds 42-46) + 3 attn clean (seeds 42-44), all combined loss, slim
-- `gru5_plus_attention2_balanced7030.zip` — 5 GRU + 2 attn, 70/30 weights (champion)
-- `tightwd5_uniform.zip` — 5 GRU tightwd_v2 only, full checkpoints (not slim)
-- `slim_checkpoints_pearson.zip` — 3 GRU pearson (42-44) + 2 attn clean (45-46) + 2 attn pearson (42-43)
-- `gru_seed_expansion.zip` — 7 tightwd_v2 (47-53) + 6 pearson_v1 (45-50), all slim
+### Val-to-LB Calibration (8 data points)
+| Submission | Val | LB | Gap | # Models |
+|-----------|-----|-----|-----|----------|
+| Single GRU | 0.2584 | 0.2580 | -0.0004 | 1 |
+| 5 GRU uniform | 0.2683 | 0.2614 | -0.0069 | 5 |
+| Old champion 5G+2A | 0.2715 | 0.2633 | -0.0082 | 7 |
+| champion_clone_v2 | 0.2734 | 0.2654 | -0.0080 | 7 |
+| best_gru_combo | 0.2788 | 0.2647 | **-0.0141** | 7 (OVERFIT) |
+| champion_v4_s50swap | 0.2758 | 0.2668 | -0.0090 | 7 |
+| s2_s43_swap | 0.2770 | 0.2675 | -0.0095 | 7 |
+| s4_nb07s48_swap | 0.2749 | 0.2646 | -0.0103 | 7 |
+- **7-model gap (excl overfit)**: mean -0.0088, range [-0.0103, -0.0080]
+- **Use -0.009 as conservative 7-model gap estimate**
 
-### Expanded GRU Pool (val scores from notebook 06)
-| Model | Val Score | Config | Seed |
-|-------|----------|--------|------|
-| gru_pearson_v1_seed47 | **0.2668** | pearson_combined | 47 |
-| gru_tightwd_v2_seed50 | **0.2654** | combined | 50 |
-| gru_tightwd_v2_seed48 | **0.2649** | combined | 48 |
-| gru_pearson_v1_seed45 | **0.2648** | pearson_combined | 45 |
-| gru_pearson_v1_seed50 | **0.2640** | pearson_combined | 50 |
-| gru_tightwd_v2_seed51 | 0.2637 | combined | 51 |
-| gru_tightwd_v2_seed53 | 0.2636 | combined | 53 |
-| gru_pearson_v1_seed46 | 0.2634 | pearson_combined | 46 |
-| gru_tightwd_v2_seed47 | 0.2620 | combined | 47 |
-| gru_pearson_v1_seed49 | 0.2603 | pearson_combined | 49 |
-| gru_pearson_v1_seed48 | 0.2589 | pearson_combined | 48 |
-| gru_tightwd_v2_seed49 | 0.2577 | combined | 49 |
-| gru_tightwd_v2_seed52 | 0.2537 | combined | 52 |
+### Champion s2_s43_swap Details
+- **LB Score**: 0.2675 (+0.0007 over previous champion v4_s50swap)
+- **GRUs** (70% weight, 0.14 each): p1_s47, tw2_s50, tw2_s48, p1_s45, p1_s50
+- **Attention** (30% weight, 0.15 each): attn_comb_s43 (old) + attn_nb07_s50 (new)
+- **Key insight**: attn_comb_s43 > attn_comb_s42 — old attention seed rotation works
+- **S4 result**: s4_nb07s48_swap scored 0.2646, confirming nb07_s50 >> nb07_s48 on LB
 
-### Expanded Attention Pool (val scores from notebook 07 + original training)
-| Model | Val Score | Source | Seed |
-|-------|----------|--------|------|
-| **attn_clean_seed50** | **0.2752** | nb07 session 2 | 50 |
-| attn_clean_seed48 | 0.2706 | nb07 session 2 | 48 |
-| attn_clean_seed46 | 0.2659 | nb07 session 1 | 46 |
-| attn_clean_seed52 | 0.2641 | nb07 session 3 | 52 |
-| attn_clean_seed51 | 0.2600 | nb07 session 3 | 51 |
-| attn_clean_seed45 | 0.2599 | nb07 session 1 | 45 |
-| attn_clean_seed47 | 0.2598 | nb07 session 1 | 47 |
-| attn_clean_seed49 | 0.2560 | nb07 session 2 | 49 |
-| attn_clean_seed42 | — | original | 42 |
-| attn_clean_seed43 | — | original | 43 |
-| attn_clean_seed44 | — | original | 44 |
-
-All use combined loss (gru_attention_clean_v1 config). Zips: attn_seeds_45_46_47.zip, attn_seeds_48_49_50.zip, attn_seeds_51_52.zip.
+### Timing Data
+- **Per GRU**: ~320s (stable across all submissions)
+- **Per Attention**: 665-952s (HUGE server variance)
+- **Server variance**: 45% — identical 5G+2A ran in 2895s, 3164s, and timed out at 4199s
+- **MUST budget >30% margin** for timeout safety
 
 ---
 
-## Calibrated Timing Data
+## Proven Rules (from LB data)
 
-### Per-Model Inference Cost (from real submissions, OLD non-optimized code)
-| Model Type | Cost per Model | Source |
-|-----------|---------------|--------|
-| GRU | 319s | tightwd5_uniform: 1595s / 5 models |
-| GRU+Attention | 934s (2.93x) | champion: (3463s - 1595s) / 2 models |
+### DO
+- Select GRUs by **top individual val score** (robust, gap ~0.009)
+- Use **70/30 GRU/attention weighting** (0.14 per GRU, 0.15 per attn)
+- Mix **old + new attention seeds** (diversity > same-batch)
+- Use **combined-loss** attention only (pearson-loss attn hurts ensembles)
+- Test **one variable at a time** per submission (clean A/B tests)
 
-### need_pred Optimization Impact
-- need_prediction=True for **90.1%** of steps (99-999 out of 0-999)
-- Optimization only skips output_proj/attention on warm-up steps (9.9%)
-- **Actual savings: ~3-5% total** (NOT 50% as originally estimated)
-- GRU optimized: ~313s (-2%)
-- Attention optimized: ~874s (-6%)
-
-### Safe Ensemble Presets (with optimized inference code)
-| Preset | Models | Composition | Est. Time | Margin | Status |
-|--------|--------|-------------|-----------|--------|--------|
-| fast8_gru | 8 | 8 GRU, 0 attn | 2501s | +40% | **SAFE** |
-| balanced7 | 7 | 5 GRU, 2 attn | 3311s | +21% | **SAFE** |
-| diverse9 | 9 | 7 GRU, 2 attn | 3937s | +6% | OK |
-| diverse10 | 10 | 8 GRU, 2 attn | 4249s | -1% | **TIMEOUT** |
-| diverse12 | 12 | 8 GRU, 4 attn | 5997s | -43% | **TIMEOUT** |
-
-### Recommendation
-- **Primary**: `champion_clone_v2` — best 5 GRU (by val) + 2 old combined attn, 70/30 weights (same structure as champion with upgraded GRUs)
-- **Alternative**: `fast8_gru` (8 GRU-only, loss diversity) — more models, no attention overhead, 40% margin
-- **Avoid**: Pearson attention models in ensembles (tested, hurts)
+### DON'T
+- **NEVER use exhaustive combo search** for model selection (overfits val, gap -0.014)
+- Don't use pearson-loss attention in ensembles
+- Don't use >2 attention models (timeout risk with 45% variance)
+- Don't trust val scores alone — always calibrate with -0.009 gap
+- Don't use optimized/SLSQP weights — uniform/fixed 70/30 is more robust
 
 ---
 
-## Key Findings
+## Available Models
 
-### What Works
-- **GRU > LSTM** consistently on this data
-- **Derived features** add +0.0036 avg (spreads, trade intensity, pressure)
-- **tightwd_v2** is best GRU config: hidden=144, dropout=0.22, lr=0.0008, WD=5e-5
-- **Attention clean** is best attention config: same base + 4 heads, window=128
-- **Seed diversity** is critical (0.0095 gap between identical runs)
-- **Uniform weights > optimized weights** on LB consistently
-- **Architecture diversity** helps (+0.0019 LB from adding attention to GRU ensemble)
-- **GRU-dominant weighting (~70%) is critical** — 8-model uniform (62.5% GRU) scored 0.2624, worse than 7-model 70/30 (71% GRU) at 0.2633
+### GRU Models — Top Candidates (new top-5 in bold)
+| Model | Val | Config | Status |
+|-------|-----|--------|--------|
+| **gru_tw2_s63** | **0.2736** | tightwd_v2 | NEW — needs cache+staging |
+| **gru_p1_s47** | **0.2668** | pearson_v1 | cached |
+| **gru_tw2_s60** | **0.2663** | tightwd_v2 | NEW — needs cache+staging |
+| **gru_tw2_s50** | **0.2654** | tightwd_v2 | cached |
+| **gru_tw2_s48** | **0.2649** | tightwd_v2 | cached |
+| gru_p1_s45 | 0.2648 | pearson_v1 | cached |
+| gru_p1_s50 | 0.2640 | pearson_v1 | cached |
+| gru_tw2_s57 | 0.2641 | tightwd_v2 | NEW — needs cache+staging |
+| gru_tw2_s51 | 0.2637 | tightwd_v2 | cached |
+| gru_tw2_s53 | 0.2636 | tightwd_v2 | cached |
+| gru_tw2_s62 | 0.2634 | tightwd_v2 | NEW — needs cache+staging |
+| gru_p1_s46 | 0.2634 | pearson_v1 | cached |
+| gru_tw2_s42-46 | various | tightwd_v2 | cached |
 
-### What Doesn't Work
-- Temporal features HURT performance
-- Interaction features HURT performance
-- LSTM underperforms GRU
-- Optimized ensemble weights (SLSQP, per-target) underperform uniform on LB
-- Ring buffer SLOWER than torch.cat on CPU (indexed write overhead)
-- t1-focused loss weighting HURTS
-- **Pearson-loss attention models HURT ensemble** — balanced7 (0.2615) barely beat 5-GRU-only (0.2614)
+### Seed Expansion Progress
+- **tw2 COMPLETE**: 32 seeds (s42-73), batches 1+2 done, downloaded
+- **p1 batch 1-2 (s51-70)**: In progress on Colab
+- **p1 batch 3-4 (s71-90)**: Next on Kaggle
+- **Next steps**: Extract to _staging, cache predictions, register in validate_ensemble_local.py
 
-### Untested Hypotheses
-- Dynamic quantization (INT8) — est. 1.2-1.6x speedup on CPU, unlocks +2-3 models
-- ONNX Runtime inference — could be 2-5x faster than PyTorch on CPU
-- Reduced attention_window (128 -> 64) — halves attention cost
-- torch.jit.script compilation — potential 10-30% CPU speedup
-- Recency-weighted loss — weight later timesteps more heavily in training
-- Distilled student — 1 tiny model trained on ensemble soft targets + true labels
+### GRU Models (13 cached in cache/predictions/)
+
+### Attention Models (10 cached)
+| Model | Val | Corr with s42 |
+|-------|-----|--------------|
+| attn_nb07_s50 | **0.2752** | 0.926 |
+| attn_nb07_s48 | 0.2706 | 0.929 |
+| attn_nb07_s46 | 0.2659 | 0.935 |
+| attn_nb07_s52 | 0.2641 | 0.934 |
+| attn_nb07_s51 | 0.2600 | 0.917 (most diverse) |
+| attn_nb07_s45 | 0.2599 | 0.910 |
+| attn_nb07_s47 | 0.2598 | 0.937 |
+| attn_nb07_s49 | 0.2560 | 0.932 |
+| attn_comb_s42 | — | 1.000 (old, in champion) |
+| attn_comb_s43 | — | 0.895 (most diverse old) |
+
+### Not Cached (need inference before use in val)
+- attn_comb_s44, attn_comb_s45, attn_comb_s46, attn_pear_s42, attn_pear_s43
+- gru_p1_s{42-44,48,49}, gru_tw2_s{47,49,52}
+
+---
+
+## Week Plan (Feb 9-15, Claude+Codex collaborated)
+
+### Target: 0.2761 (top 100). Current: 0.2675. Gap: +0.0086
+- Attention seed rotation alone **won't close this gap** — need speed gains + new model types
+- ONNX/JIT blocked by Docker constraints → dynamic quantization instead
+
+### Priority Order (revised after quantization FAIL, 2026-02-10)
+
+**Quantization KILLED**: Dynamic quantization makes inference 2-2.5x SLOWER for batch=1 hidden=144 models. Overhead dominates at this scale. Benchmarked on both GRU and Attention models.
+
+| P | Approach | Expected LB Gain | Risk | Effort |
+|---|----------|-----------------|------|--------|
+| P1 | **Expand GRU seeds** (13→30, re-rank top-5) | +0.003 to +0.006 | Low | 1 day Kaggle |
+| P1 | **4G+3A ensemble** (swap weakest GRU for 3rd attn) | +0.002 to +0.004 | Medium (timeout) | 0.5 day |
+| P2 | **Recency-weighted loss** (objective change) | +0.001 to +0.003 | Medium | 1 day Kaggle |
+| P3 | **Microstructure features** (1-seed kill test ONLY) | -0.002 to +0.003 | High (0/2 record) | 0.5 day |
+| KILLED | Dynamic quantization, ONNX, JIT, torch.compile, FP16 | — | — | — |
+
+### Go/No-Go Gates (Codex-agreed)
+- **4G+3A**: Must fit within ~3400s estimated time. Only submit if val improvement justifies timeout risk (19% margin vs 30% preferred).
+- **Recency-weighted**: Must show val improvement over base config with same seed. Kill if negative after 2 seeds.
+- **Microstructure**: Must show val improvement in 1-seed test. Kill immediately if negative. Cannot extend beyond Friday.
+
+### Execution Plan
+
+**Mon (Feb 10): S2/S4 Results + Quantization Benchmark + 4G+3A Evaluation**
+- Process S2/S4 results → s2_s43_swap is new champion (0.2675) ✓
+- Quantization benchmark → FAILED (2-2.5x slower) ✓
+- 4G+3A offline evaluation with cached predictions
+
+**Tue-Wed (Feb 11-12): GRU Seed Expansion (Kaggle)**
+- Train ~20 new GRU seeds (10 tightwd_v2, 10 pearson_v1) on Kaggle
+- Cache predictions, re-rank ensemble candidates
+
+**Thu (Feb 13): Recency-Weighted Loss Training**
+- Train 2-3 recency-weighted variants (different ramp schedules)
+- Evaluate against base config
+
+**Fri (Feb 14): Microstructure Kill Test + Review**
+- Train 1 microstructure GRU (seed 42). Compare val to base.
+- Review all results, build final ensembles
+
+**Sat-Sun (Feb 15-16): Consolidate + Final Submissions**
+- Build 2-3 final ensemble archetypes (safe / best / aggressive)
+- Submit ranked ladder
+
+### Submission Strategy Rules
+1. **One hypothesis per submission** (no multi-change confounding)
+2. Keep recurring **control** to detect LB noise/drift
+3. **Promotion gates**: offline uplift → runtime safe → LB non-negative → confirm
+4. **Reality check**: need ~0.285+ val to reach top 100. Speed + new objectives are the path, not reshuffling.
 
 ---
 
@@ -195,68 +242,45 @@ All use combined loss (gru_attention_clean_v1 config). Zips: attn_seeds_45_46_47
 |--------|------|------|----------|
 | gru_derived_tightwd_v2.yaml | GRU | combined | Best GRU baseline |
 | gru_attention_clean_v1.yaml | GRU+Attn | combined | Best attention model |
-| gru_pearson_v1.yaml | GRU | pearson_combined | Metric-aligned loss, lr=0.0005 |
-| gru_attention_pearson_v1.yaml | GRU+Attn | pearson_combined | Metric-aligned attention |
+| gru_pearson_v1.yaml | GRU | pearson_combined | Metric-aligned loss |
+| gru_recency_v1.yaml | GRU | combined+recency | Recency-weighted (untested) |
+| gru_microstructure_v1.yaml | GRU | combined | +6 microstructure features (untested) |
+| tcn_base_v1.yaml | TCN | combined | Causal TCN (untested) |
 
 ### Core Scripts (scripts/)
 | Script | Purpose |
 |--------|---------|
 | train.py | Train single model from config + seed |
-| export_ensemble.py | Build submission zip (optimized solution.py with feature cache + need_pred skip) |
-| build_mixed_ensemble.py | Combine old + new checkpoints using presets, calls export_ensemble.py |
+| export_ensemble.py | Build submission zip (optimized solution.py) |
+| build_mixed_ensemble.py | Combine checkpoints using presets |
+| validate_ensemble_local.py | Cache predictions, greedy/exhaustive search, diversity analysis |
 | evaluate.py | Local evaluation on valid set |
-| validate_online_parity.py | Verify step-by-step matches batch inference |
-| score_ensemble_candidates.py | Score ensemble combinations |
-| validate_ensemble_local.py | Cache per-model predictions, greedy/exhaustive ensemble search, diversity analysis |
 
 ### Source Code (src/)
 - `src/models/gru_baseline.py` — GRU with input projection + LayerNorm + output MLP
-- `src/models/gru_attention.py` — GRU + multi-head causal attention, ring buffer for online inference
-- `src/models/lstm_model.py` — LSTM variant (unused, underperforms)
-- `src/training/trainer.py` — Training loop with AMP, grad clip, early stopping, checkpointing
-- `src/training/losses.py` — Loss factory: MSE, Combined, Huber, WeightedPearson, PearsonCombined
-- `src/data/preprocessing.py` — DerivedFeatureBuilder (10 features), TemporalBuffer, InteractionBuilder
+- `src/models/gru_attention.py` — GRU + multi-head causal attention
+- `src/models/tcn_model.py` — Causal TCN with depthwise separable convs (untested)
+- `src/training/trainer.py` — Training loop with AMP, grad clip, early stopping
+- `src/training/losses.py` — MSE, Combined, Huber, WeightedPearson, PearsonCombined
+- `src/data/preprocessing.py` — DerivedFeatures, TemporalBuffer, InteractionBuilder, MicrostructureBuffer
 - `src/data/dataset.py` — PyTorch Dataset from parquet
-- `src/evaluation/metrics.py` — Weighted Pearson Correlation, all loss implementations
 
 ### Notebooks (notebooks/)
 | Notebook | Status |
 |----------|--------|
-| 01_eda.ipynb | Complete — data analysis |
-| 02_feature_analysis.ipynb | Complete — feature importance |
-| 03_hp_optimization.ipynb | Complete — HP sweep results |
-| 04_seed_diversity_analysis.ipynb | Complete — seed variance analysis |
-| 05_retrain_pearson_models.ipynb | Complete — 7 pearson models trained |
-| 06_gru_seed_expansion.ipynb | Complete — 13 new GRU models (7 tightwd + 6 pearson) |
-
----
-
-## Immediate Next Steps
-
-### champion_clone_v2 = 0.2654 (CHAMPION)
-- GRUs (0.14 each, 70% total): pearson_v1_seed47 (0.2668), tightwd_v2_seed50 (0.2654), tightwd_v2_seed48 (0.2649), pearson_v1_seed45 (0.2648), pearson_v1_seed50 (0.2640)
-- Attention (0.15 each, 30% total): attn_clean_seed42, attn_clean_seed43 (both combined loss, from gru5_attn3_uniform8.zip model_5/model_6)
-
-### Target: 0.2761 (133rd place, +0.0107 gap)
-- 133rd through 305th all share this score
-
-### This Week (Codex-agreed, ROI-ordered)
-1. **Latency-aware blend optimization** — local validation running (validate_ensemble_local.py), greedy search with time-budget constraint + low correlation. ~done.
-2. **Dynamic quantization** — INT8 quantization on CPU, est. 1.2-1.6x speedup, unlocks +2-3 more models. Fast/low-risk.
-3. **Recency-weighted GRU retrain** — weight later timesteps more heavily in loss. Same architecture, new objective.
-4. **Scale attention seeds** — DONE! All 11 seeds trained (42-52). Running local inference now (~3h). Best: seed50 val 0.2752.
-
-### Next Week
-5. **Proxy microstructure features** — queue imbalance, microprice, spread slope, OFI proxy. Strict ablation, kill fast if no lift.
-6. **Distilled student** — 1 tiny GRU trained on ensemble soft targets + true labels. Frees time budget.
-7. **Stateful TCN** — tiny causal TCN with cached conv buffers. Moonshot only if time permits.
+| 01-04 | Complete — EDA, features, HP sweep, seed analysis |
+| 05_retrain_pearson_models.ipynb | Complete — pearson models |
+| 06_gru_seed_expansion.ipynb | Complete — 13 new GRU models |
+| 07_attention_seed_expansion.ipynb | Complete — 8 new attention models (seeds 45-52) |
+| 08_attn_gpu_inference.ipynb | Complete — GPU batch inference for attention caching |
 
 ---
 
 ## Technical Notes
 - Kaggle `%%bash` buffers output → use `os.system()` or `!` prefix instead
-- `sys.stdout.isatty()` returns False in notebooks → tqdm falls back to batch logs
-- Checkpoints must be stripped (remove optimizer/scheduler state) to fit 20MB zip limit
+- Checkpoints must be stripped (remove optimizer/scheduler state) to fit 20MB zip
 - Kaggle sessions don't persist → train + export + download in single session
 - `.gitignore` excludes: *.pt, *.npz, *.zip, logs/slim/, submissions/
-- `export_ensemble.py` is modified locally with optimizations but NOT yet committed to GitHub
+- export_ensemble.py generates optimized solution.py (feature cache + need_pred skip)
+- validate_ensemble_local.py has 23 cached models for instant ensemble scoring
+- Staging dir `logs/_staging/` has extracted checkpoints for submission building
