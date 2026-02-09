@@ -63,6 +63,7 @@ ZIPS = {
     "gru5_attn3": DOWNLOADS / "gru5_attn3_uniform8.zip",
     "seed_expansion": DOWNLOADS / "gru_seed_expansion.zip",
     "slim_pearson": DOWNLOADS / "slim_checkpoints_pearson.zip",
+    "attn_nb07": DOWNLOADS / "attn_seeds_45_46_47.zip",
 }
 
 # ---------------------------------------------------------------------------
@@ -121,6 +122,14 @@ _reg("attn_pear_s42", "slim_pearson", "gru_attention_pearson_v1_seed42.pt",
 _reg("attn_pear_s43", "slim_pearson", "gru_attention_pearson_v1_seed43.pt",
      "normalizer_gru_attention_pearson_v1_seed43.npz", "gru_attention_pearson_v1", "gru_attention")
 
+# --- From attn_seeds_45_46_47.zip (notebook 07 session 1, combined loss) ---
+_reg("attn_nb07_s45", "attn_nb07", "attn_clean_seed45.pt",
+     "normalizer_attn_clean_seed45.npz", "gru_attention_clean_v1", "gru_attention", val=0.2599)
+_reg("attn_nb07_s46", "attn_nb07", "attn_clean_seed46.pt",
+     "normalizer_attn_clean_seed46.npz", "gru_attention_clean_v1", "gru_attention", val=0.2659)
+_reg("attn_nb07_s47", "attn_nb07", "attn_clean_seed47.pt",
+     "normalizer_attn_clean_seed47.npz", "gru_attention_clean_v1", "gru_attention", val=0.2598)
+
 # ---------------------------------------------------------------------------
 # Named ensembles (presets)
 # ---------------------------------------------------------------------------
@@ -161,6 +170,18 @@ PRESETS = {
         "desc": "5 new GRU + 2 combined attn (45-46), 70/30",
         "models": ["gru_p1_s47", "gru_tw2_s50", "gru_tw2_s48", "gru_p1_s45", "gru_p1_s50",
                     "attn_comb_s45", "attn_comb_s46"],
+        "weights": [0.14, 0.14, 0.14, 0.14, 0.14, 0.15, 0.15],
+    },
+    "champion_v3_46swap": {
+        "desc": "Champion GRUs + attn_nb07_s46 replacing attn_comb_s43, 70/30",
+        "models": ["gru_p1_s47", "gru_tw2_s50", "gru_tw2_s48", "gru_p1_s45", "gru_p1_s50",
+                    "attn_comb_s42", "attn_nb07_s46"],
+        "weights": [0.14, 0.14, 0.14, 0.14, 0.14, 0.15, 0.15],
+    },
+    "champion_v3_both_new": {
+        "desc": "Champion GRUs + 2 best nb07 attn (46+45), 70/30",
+        "models": ["gru_p1_s47", "gru_tw2_s50", "gru_tw2_s48", "gru_p1_s45", "gru_p1_s50",
+                    "attn_nb07_s46", "attn_nb07_s45"],
         "weights": [0.14, 0.14, 0.14, 0.14, 0.14, 0.15, 0.15],
     },
 }
