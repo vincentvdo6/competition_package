@@ -64,6 +64,7 @@ ZIPS = {
     "seed_expansion": DOWNLOADS / "gru_seed_expansion.zip",
     "slim_pearson": DOWNLOADS / "slim_checkpoints_pearson.zip",
     "attn_nb07": DOWNLOADS / "attn_seeds_45_46_47.zip",
+    "attn_nb07_s2": DOWNLOADS / "attn_seeds_48_49_50.zip",
 }
 
 # ---------------------------------------------------------------------------
@@ -130,6 +131,14 @@ _reg("attn_nb07_s46", "attn_nb07", "attn_clean_seed46.pt",
 _reg("attn_nb07_s47", "attn_nb07", "attn_clean_seed47.pt",
      "normalizer_attn_clean_seed47.npz", "gru_attention_clean_v1", "gru_attention", val=0.2598)
 
+# --- From attn_seeds_48_49_50.zip (notebook 07 session 2, combined loss) ---
+_reg("attn_nb07_s48", "attn_nb07_s2", "attn_clean_seed48.pt",
+     "normalizer_attn_clean_seed48.npz", "gru_attention_clean_v1", "gru_attention", val=0.2706)
+_reg("attn_nb07_s49", "attn_nb07_s2", "attn_clean_seed49.pt",
+     "normalizer_attn_clean_seed49.npz", "gru_attention_clean_v1", "gru_attention", val=0.2560)
+_reg("attn_nb07_s50", "attn_nb07_s2", "attn_clean_seed50.pt",
+     "normalizer_attn_clean_seed50.npz", "gru_attention_clean_v1", "gru_attention", val=0.2752)
+
 # ---------------------------------------------------------------------------
 # Named ensembles (presets)
 # ---------------------------------------------------------------------------
@@ -182,6 +191,18 @@ PRESETS = {
         "desc": "Champion GRUs + 2 best nb07 attn (46+45), 70/30",
         "models": ["gru_p1_s47", "gru_tw2_s50", "gru_tw2_s48", "gru_p1_s45", "gru_p1_s50",
                     "attn_nb07_s46", "attn_nb07_s45"],
+        "weights": [0.14, 0.14, 0.14, 0.14, 0.14, 0.15, 0.15],
+    },
+    "champion_v4_top2attn": {
+        "desc": "Champion GRUs + 2 best nb07 attn (50+48), 70/30",
+        "models": ["gru_p1_s47", "gru_tw2_s50", "gru_tw2_s48", "gru_p1_s45", "gru_p1_s50",
+                    "attn_nb07_s50", "attn_nb07_s48"],
+        "weights": [0.14, 0.14, 0.14, 0.14, 0.14, 0.15, 0.15],
+    },
+    "champion_v4_s50swap": {
+        "desc": "Champion GRUs + attn_nb07_s50 (val 0.2752!) + old s42, 70/30",
+        "models": ["gru_p1_s47", "gru_tw2_s50", "gru_tw2_s48", "gru_p1_s45", "gru_p1_s50",
+                    "attn_comb_s42", "attn_nb07_s50"],
         "weights": [0.14, 0.14, 0.14, 0.14, 0.14, 0.15, 0.15],
     },
 }
