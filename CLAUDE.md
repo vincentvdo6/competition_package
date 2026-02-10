@@ -83,11 +83,12 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | champion_clone_v2 | 0.2654 | 5G+2A | 2925s | Top-5 GRU + old attn |
 | champion_v4_s50swap | 0.2668 | 5G+2A | 2895s | Old champion |
 | **s2_s43_swap** | **0.2675** | **5G+2A** | **3106s** | **CURRENT CHAMPION** |
+| variant_b_2tw2_3p1 | 0.2662 | 5G+2A | 2975s | OVERFIT: top-5 from 81 seeds |
 | champion_v4_top2attn | TIMEOUT | 5G+2A | 4199s | Server variance |
 | 5 GRU + 3 attn uniform | TIMEOUT | 5G+3A | 4200s | Too many attn |
 | s4_nb07s48_swap | 0.2646 | 5G+2A | 3670s | nb07_s48 worse than s50 |
 
-### Val-to-LB Calibration (8 data points)
+### Val-to-LB Calibration (9 data points)
 | Submission | Val | LB | Gap | # Models |
 |-----------|-----|-----|-----|----------|
 | Single GRU | 0.2584 | 0.2580 | -0.0004 | 1 |
@@ -98,8 +99,10 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | champion_v4_s50swap | 0.2758 | 0.2668 | -0.0090 | 7 |
 | s2_s43_swap | 0.2770 | 0.2675 | -0.0095 | 7 |
 | s4_nb07s48_swap | 0.2749 | 0.2646 | -0.0103 | 7 |
-- **7-model gap (excl overfit)**: mean -0.0088, range [-0.0103, -0.0080]
-- **Use -0.009 as conservative 7-model gap estimate**
+| variant_b_2tw2_3p1 | 0.2801 | 0.2662 | **-0.0139** | 7 (OVERFIT: top-5 of 81) |
+- **7-model gap (well-selected)**: mean -0.0088, range [-0.0103, -0.0080]
+- **Cherry-picked from large pool**: gap -0.0139 (same as exhaustive -0.0141)
+- **RULE: Selecting top-K from pool >20 seeds OVERFITS. Use contiguous/pre-registered seed ranges.**
 
 ### Champion s2_s43_swap Details
 - **LB Score**: 0.2675 (+0.0007 over previous champion v4_s50swap)
@@ -119,13 +122,14 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 ## Proven Rules (from LB data)
 
 ### DO
-- Select GRUs by **top individual val score** (robust, gap ~0.009)
+- Use **contiguous/pre-registered seed ranges** for GRU selection (e.g., s42-50)
 - Use **70/30 GRU/attention weighting** (0.14 per GRU, 0.15 per attn)
 - Mix **old + new attention seeds** (diversity > same-batch)
 - Use **combined-loss** attention only (pearson-loss attn hurts ensembles)
 - Test **one variable at a time** per submission (clean A/B tests)
 
 ### DON'T
+- **NEVER cherry-pick top-K from large seed pool** (gap -0.0139 from 81 seeds, same as exhaustive)
 - **NEVER use exhaustive combo search** for model selection (overfits val, gap -0.014)
 - Don't use pearson-loss attention in ensembles
 - Don't use >2 attention models (timeout risk with 45% variance)
@@ -139,27 +143,37 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 ### GRU Models — Top Candidates (new top-5 in bold)
 | Model | Val | Config | Status |
 |-------|-----|--------|--------|
-| **gru_tw2_s63** | **0.2736** | tightwd_v2 | NEW — needs cache+staging |
-| **gru_p1_s47** | **0.2668** | pearson_v1 | cached |
-| **gru_tw2_s60** | **0.2663** | tightwd_v2 | NEW — needs cache+staging |
-| **gru_tw2_s50** | **0.2654** | tightwd_v2 | cached |
-| **gru_tw2_s48** | **0.2649** | tightwd_v2 | cached |
-| gru_p1_s45 | 0.2648 | pearson_v1 | cached |
-| gru_p1_s50 | 0.2640 | pearson_v1 | cached |
-| gru_tw2_s57 | 0.2641 | tightwd_v2 | NEW — needs cache+staging |
-| gru_tw2_s51 | 0.2637 | tightwd_v2 | cached |
-| gru_tw2_s53 | 0.2636 | tightwd_v2 | cached |
-| gru_tw2_s62 | 0.2634 | tightwd_v2 | NEW — needs cache+staging |
-| gru_p1_s46 | 0.2634 | pearson_v1 | cached |
-| gru_tw2_s42-46 | various | tightwd_v2 | cached |
+| **gru_tw2_s63** | **0.2736** | tightwd_v2 | cached + staged |
+| **gru_p1_s79** | **0.2690** | pearson_v1 | cached + staged |
+| **gru_p1_s63** | **0.2689** | pearson_v1 | cached + staged |
+| **gru_p1_s87** | **0.2685** | pearson_v1 | cached + staged |
+| **gru_p1_s67** | **0.2683** | pearson_v1 | cached + staged |
+| gru_p1_s56 | 0.2681 | pearson_v1 | staged |
+| gru_p1_s76 | 0.2677 | pearson_v1 | staged |
+| gru_p1_s86 | 0.2672 | pearson_v1 | staged |
+| gru_p1_s59 | 0.2672 | pearson_v1 | staged |
+| gru_p1_s47 | 0.2668 | pearson_v1 | cached |
+| gru_tw2_s60 | 0.2663 | tightwd_v2 | cached + staged |
+| gru_tw2_s65 | 0.2655 | tightwd_v2 | staged |
+| gru_tw2_s50 | 0.2654 | tightwd_v2 | cached + staged |
 
 ### Seed Expansion Progress
-- **tw2 COMPLETE**: 32 seeds (s42-73), batches 1+2 done, downloaded
-- **p1 batch 1-2 (s51-70)**: In progress on Colab
-- **p1 batch 3-4 (s71-90)**: Next on Kaggle
-- **Next steps**: Extract to _staging, cache predictions, register in validate_ensemble_local.py
+- **tw2 COMPLETE**: 32 seeds (s42-73), all extracted to _staging
+- **p1 COMPLETE**: 49 seeds (s42-90), all extracted to _staging
+- **Total**: 81 GRU seeds trained, 96 models registered in validate_ensemble_local.py
+- **Cached**: 28 models in cache/predictions/ (13 original + 6 new expansion + 10 attention)
 
-### GRU Models (13 cached in cache/predictions/)
+### Submission Variants (ready to submit)
+| Variant | GRUs | Val | Bootstrap p10 | Std | Est LB |
+|---------|------|-----|---------------|-----|--------|
+| **B (2tw2+3p1)** | tw2_s63/s60 + p1_s79/s63/s87 | **0.2801** | **0.2669** | 0.0098 | ~0.2711 |
+| A (1tw2+4p1) | tw2_s63 + p1_s79/s63/s87/s67 | 0.2800 | 0.2656 | 0.0105 | ~0.2710 |
+| C (3tw2+2p1) | tw2_s63/s60/s50 + p1_s79/s63 | 0.2792 | 0.2665 | 0.0094 | ~0.2702 |
+| Champion | tw2_s50/s48 + p1_s47/s45/s50 | 0.2770 | 0.2652 | 0.0090 | 0.2675 (actual) |
+
+**Codex recommendation**: Submit B first (best p10 + diversity), then C, then A.
+
+### GRU Models (28 cached in cache/predictions/)
 
 ### Attention Models (10 cached)
 | Model | Val | Corr with s42 |
@@ -195,36 +209,38 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 |---|----------|-----------------|------|--------|
 | P1 | **Expand GRU seeds** (13→30, re-rank top-5) | +0.003 to +0.006 | Low | 1 day Kaggle |
 | P1 | **4G+3A ensemble** (swap weakest GRU for 3rd attn) | +0.002 to +0.004 | Medium (timeout) | 0.5 day |
-| P2 | **Recency-weighted loss** (objective change) | +0.001 to +0.003 | Medium | 1 day Kaggle |
+| KILLED | **Recency-weighted loss** — both seeds negative (0.2570, 0.2633 vs 0.2613 mean) | — | — | — |
 | P3 | **Microstructure features** (1-seed kill test ONLY) | -0.002 to +0.003 | High (0/2 record) | 0.5 day |
 | KILLED | Dynamic quantization, ONNX, JIT, torch.compile, FP16 | — | — | — |
 
 ### Go/No-Go Gates (Codex-agreed)
 - **4G+3A**: Must fit within ~3400s estimated time. Only submit if val improvement justifies timeout risk (19% margin vs 30% preferred).
-- **Recency-weighted**: Must show val improvement over base config with same seed. Kill if negative after 2 seeds.
+- **Recency-weighted**: KILLED — both seeds (42: 0.2570, 43: 0.2633) underperformed baseline mean (0.2613).
 - **Microstructure**: Must show val improvement in 1-seed test. Kill immediately if negative. Cannot extend beyond Friday.
 
 ### Execution Plan
 
-**Mon (Feb 10): S2/S4 Results + Quantization Benchmark + 4G+3A Evaluation**
+**Mon (Feb 10): S2/S4 Results + Quantization + 4G+3A + Seed Expansion**
 - Process S2/S4 results → s2_s43_swap is new champion (0.2675) ✓
-- Quantization benchmark → FAILED (2-2.5x slower) ✓
-- 4G+3A offline evaluation with cached predictions
+- Quantization benchmark → KILLED (2-2.5x slower) ✓
+- 4G+3A offline evaluation → KILLED (no meaningful improvement) ✓
+- GRU seed expansion: 32 tw2 (Kaggle) + 40 p1 (Colab) = 72 new seeds ✓
+- New top-5 GRU: tw2_s63(0.2736), p1_s79(0.2690), p1_s63(0.2689), p1_s87(0.2685), p1_s67(0.2683) ✓
+- Built 3 submission variants (A/B/C), best val 0.2801 (+0.003 over champion) ✓
+- Recency-weighted loss → KILLED (both seeds negative) ✓
 
-**Tue-Wed (Feb 11-12): GRU Seed Expansion (Kaggle)**
-- Train ~20 new GRU seeds (10 tightwd_v2, 10 pearson_v1) on Kaggle
-- Cache predictions, re-rank ensemble candidates
+**Tue (Feb 11): Submit Best Variants**
+- Submit Variant B (2tw2+3p1) → pending
+- Submit Variant C (3tw2+2p1) if B looks good → pending
+- Microstructure kill test (if time allows)
 
-**Thu (Feb 13): Recency-Weighted Loss Training**
-- Train 2-3 recency-weighted variants (different ramp schedules)
-- Evaluate against base config
-
-**Fri (Feb 14): Microstructure Kill Test + Review**
-- Train 1 microstructure GRU (seed 42). Compare val to base.
-- Review all results, build final ensembles
+**Wed-Fri (Feb 12-14): Next Priorities**
+- Correlation-aware ensemble selection (Codex-agreed P2)
+- Microstructure 1-seed kill test
+- Review all results, iterate on ensemble
 
 **Sat-Sun (Feb 15-16): Consolidate + Final Submissions**
-- Build 2-3 final ensemble archetypes (safe / best / aggressive)
+- Build final ensemble archetypes
 - Submit ranked ladder
 
 ### Submission Strategy Rules
@@ -243,7 +259,7 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | gru_derived_tightwd_v2.yaml | GRU | combined | Best GRU baseline |
 | gru_attention_clean_v1.yaml | GRU+Attn | combined | Best attention model |
 | gru_pearson_v1.yaml | GRU | pearson_combined | Metric-aligned loss |
-| gru_recency_v1.yaml | GRU | combined+recency | Recency-weighted (untested) |
+| gru_recency_v1.yaml | GRU | combined+recency | KILLED — both seeds negative |
 | gru_microstructure_v1.yaml | GRU | combined | +6 microstructure features (untested) |
 | tcn_base_v1.yaml | TCN | combined | Causal TCN (untested) |
 
@@ -273,6 +289,8 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | 06_gru_seed_expansion.ipynb | Complete — 13 new GRU models |
 | 07_attention_seed_expansion.ipynb | Complete — 8 new attention models (seeds 45-52) |
 | 08_attn_gpu_inference.ipynb | Complete — GPU batch inference for attention caching |
+| 09_gru_seed_expansion_v2.ipynb | Complete — tw2 seeds 54-73 (Kaggle) |
+| 09_colab_p1_seeds.ipynb | Complete — p1 seeds 51-90 (Colab) |
 
 ---
 
@@ -282,5 +300,5 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 - Kaggle sessions don't persist → train + export + download in single session
 - `.gitignore` excludes: *.pt, *.npz, *.zip, logs/slim/, submissions/
 - export_ensemble.py generates optimized solution.py (feature cache + need_pred skip)
-- validate_ensemble_local.py has 23 cached models for instant ensemble scoring
+- validate_ensemble_local.py has 96 registered models (28 cached) for ensemble scoring
 - Staging dir `logs/_staging/` has extracted checkpoints for submission building

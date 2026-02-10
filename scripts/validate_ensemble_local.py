@@ -639,9 +639,12 @@ def cmd_greedy(args):
 
     max_models = args.max_models
     use_7030 = args.weighted_attn
+    div_weight = getattr(args, "diversity_weight", 0.0)
     print(f"Greedy search over {len(pool)} cached models (max {max_models})")
     if use_7030:
         print("  Using 70/30 GRU/attn weighting")
+    if div_weight > 0:
+        print(f"  Diversity weight: {div_weight}")
     print()
 
     # Load all predictions
@@ -655,6 +658,15 @@ def cmd_greedy(args):
             targets = t
             seq_indices = s
 
+    # Precompute correlation matrix for diversity scoring
+    corr_matrix = None
+    name_to_idx = {}
+    if div_weight > 0:
+        names_list = list(all_preds.keys())
+        name_to_idx = {n: i for i, n in enumerate(names_list)}
+        flat = np.array([all_preds[n].flatten() for n in names_list])
+        corr_matrix = np.corrcoef(flat)
+
     def compute_weights(selected_names):
         """Compute weights: uniform or 70/30 GRU/attn split."""
         if not use_7030:
@@ -666,6 +678,14 @@ def cmd_greedy(args):
         w_gru = 0.70 / n_gru
         w_attn = 0.30 / n_attn
         return [w_gru if n.startswith("gru_") else w_attn for n in selected_names]
+
+    def diversity_bonus(candidate, selected):
+        """1 - mean correlation with selected models. Higher = more diverse."""
+        if not selected or corr_matrix is None:
+            return 0.0
+        ci = name_to_idx[candidate]
+        corrs = [corr_matrix[ci, name_to_idx[s]] for s in selected]
+        return 1.0 - np.mean(corrs)
 
     # Find best single model
     print("Step 1: Best single model")
@@ -688,27 +708,36 @@ def cmd_greedy(args):
 
         print(f"\nStep {step}: Adding model {step}/{max_models}")
         best_add = None
-        best_add_score = -1
+        best_combined = -1
 
         for candidate in remaining:
             trial = selected + [candidate]
             trial_preds = [all_preds[n] for n in trial]
             weights = compute_weights(trial)
             sc = score_ensemble(trial_preds, targets, weights=weights)
-            if sc["avg"] > best_add_score:
-                best_add_score = sc["avg"]
+            combined = sc["avg"] + div_weight * diversity_bonus(candidate, selected)
+            if combined > best_combined:
+                best_combined = combined
                 best_add = candidate
 
-        # Check if adding helps
+        # Check if adding helps (compare ensemble scores, not combined)
+        trial_preds = [all_preds[n] for n in selected + [best_add]]
+        trial_weights = compute_weights(selected + [best_add])
+        add_score = score_ensemble(trial_preds, targets, weights=trial_weights)["avg"]
+
         prev_preds = [all_preds[n] for n in selected]
         prev_weights = compute_weights(selected)
         prev_score = score_ensemble(prev_preds, targets, weights=prev_weights)["avg"]
 
-        delta = best_add_score - prev_score
+        delta = add_score - prev_score
         selected.append(best_add)
         remaining.remove(best_add)
 
-        print(f"  + {best_add}: {best_add_score:.4f} (delta: {delta:+.4f})")
+        div_str = ""
+        if div_weight > 0:
+            db = diversity_bonus(best_add, selected[:-1])
+            div_str = f" div={db:.4f}"
+        print(f"  + {best_add}: {add_score:.4f} (delta: {delta:+.4f}){div_str}")
 
         if delta < 0:
             print(f"  WARNING: adding {best_add} DECREASED score by {delta:.4f}")
@@ -804,6 +833,202 @@ def cmd_diversity(args):
     for i in range(n):
         avg_corr = (corr_matrix[i].sum() - 1.0) / (n - 1)
         print(f"  {avg_corr:.4f}  {pool[i]}")
+
+
+def cmd_greedy_diverse(args):
+    """Greedy forward selection with diversity-aware scoring.
+
+    Sweeps multiple lambda values and compares by bootstrap p10 (downside risk).
+    Supports fixing attention models to only optimize GRU slots.
+    """
+    # Resolve pool
+    pool_name = args.pool
+    if pool_name in MODEL_GROUPS:
+        pool = MODEL_GROUPS[pool_name]
+    else:
+        pool = pool_name.split(",")
+
+    pool = [n for n in pool if is_cached(n)]
+    if not pool:
+        print("No cached models in pool. Run `infer` first.")
+        return
+
+    max_models = args.max_models
+    use_7030 = args.weighted_attn
+    lambdas = args.lambdas
+    fix_attn = args.fix_attn or []
+    n_bootstrap = args.bootstrap
+    verbose = args.verbose
+
+    # Validate fixed attention models are cached
+    for name in fix_attn:
+        if not is_cached(name):
+            print(f"Fixed attention model {name} is not cached. Run `infer` first.")
+            return
+        if name in pool:
+            pool.remove(name)
+
+    # When attention is fixed, only search over GRU models
+    if fix_attn:
+        pool = [n for n in pool if n.startswith("gru_")]
+
+    print(f"Diversity-aware greedy search over {len(pool)} cached models (max {max_models})")
+    if use_7030:
+        print(f"  Using 70/30 GRU/attn weighting")
+    if fix_attn:
+        print(f"  Fixed attention: {', '.join(fix_attn)}")
+    print(f"  Lambda sweep: {lambdas}")
+    print(f"  Bootstrap: {n_bootstrap} resamples")
+    print()
+
+    # Load all predictions (pool + fixed attention)
+    all_preds = {}
+    targets = None
+    seq_indices = None
+    for name in pool + fix_attn:
+        p, t, s = load_cache(name)
+        all_preds[name] = p
+        if targets is None:
+            targets = t
+            seq_indices = s
+
+    # Precompute correlation matrix
+    names_list = list(all_preds.keys())
+    name_to_idx = {n: i for i, n in enumerate(names_list)}
+    flat = np.array([all_preds[n].flatten() for n in names_list])
+    corr_matrix = np.corrcoef(flat)
+
+    def compute_weights(selected_names):
+        if not use_7030:
+            return None
+        n_gru = sum(1 for n in selected_names if n.startswith("gru_"))
+        n_attn = len(selected_names) - n_gru
+        if n_attn == 0 or n_gru == 0:
+            return None
+        w_gru = 0.70 / n_gru
+        w_attn = 0.30 / n_attn
+        return [w_gru if n.startswith("gru_") else w_attn for n in selected_names]
+
+    def mean_corr_with(candidate, selected):
+        if not selected:
+            return 0.0
+        ci = name_to_idx[candidate]
+        return np.mean([corr_matrix[ci, name_to_idx[s]] for s in selected])
+
+    # Run greedy for each lambda
+    results = {}
+    for lam in lambdas:
+        selected = list(fix_attn)
+        gru_pool = [n for n in pool if n not in fix_attn]
+
+        if not selected:
+            # First pick: best single model (no diversity term)
+            best_name = max(gru_pool, key=lambda n:
+                score_ensemble([all_preds[n]], targets)["avg"])
+            selected.append(best_name)
+            gru_pool.remove(best_name)
+
+        steps_log = []
+        for step in range(len(selected) + 1, max_models + 1):
+            if not gru_pool:
+                break
+
+            step_details = []
+            for candidate in gru_pool:
+                trial = selected + [candidate]
+                trial_preds = [all_preds[n] for n in trial]
+                w = compute_weights(trial)
+                ens_score = score_ensemble(trial_preds, targets, weights=w)["avg"]
+                mc = mean_corr_with(candidate, selected)
+                div_bonus = 1.0 - mc
+                combined = ens_score + lam * div_bonus
+                step_details.append({
+                    "name": candidate,
+                    "ens_score": ens_score,
+                    "div_bonus": div_bonus,
+                    "combined": combined,
+                    "mean_corr": mc,
+                })
+
+            step_details.sort(key=lambda x: x["combined"], reverse=True)
+            winner = step_details[0]
+            selected.append(winner["name"])
+            gru_pool.remove(winner["name"])
+            steps_log.append(step_details)
+
+        # Score final ensemble
+        final_preds = [all_preds[n] for n in selected]
+        final_w = compute_weights(selected)
+        final_sc = score_ensemble(final_preds, targets, weights=final_w)
+        boot = bootstrap_score(final_preds, targets, seq_indices,
+                               n_bootstrap=n_bootstrap, weights=final_w)
+
+        results[lam] = {
+            "selected": list(selected),
+            "score": final_sc,
+            "bootstrap": boot,
+            "steps": steps_log,
+        }
+
+    # Report comparison table
+    print(f"{'='*80}")
+    print("DIVERSITY-AWARE GREEDY SEARCH RESULTS")
+    print(f"{'='*80}")
+    print(f"\n{'Lambda':>8} {'Val Avg':>8} {'Boot Mean':>10} {'Boot p10':>9} "
+          f"{'Boot Std':>9}  GRU Models")
+    print("-" * 90)
+
+    for lam in lambdas:
+        r = results[lam]
+        gru_models = [n for n in r["selected"] if n.startswith("gru_")]
+        gru_str = ", ".join(n.replace("gru_", "") for n in gru_models)
+        print(f"{lam:>8.4f} {r['score']['avg']:>8.4f} {r['bootstrap']['mean']:>10.4f} "
+              f"{r['bootstrap']['p10']:>9.4f} {r['bootstrap']['std']:>9.4f}  {gru_str}")
+
+    # Highlight best by p10
+    best_lam = max(lambdas, key=lambda l: results[l]["bootstrap"]["p10"])
+    best = results[best_lam]
+    print(f"\nBest by bootstrap p10: lambda={best_lam}")
+    print(f"  Selected: {best['selected']}")
+    print(f"  Val: t0={best['score']['t0']:.4f}  t1={best['score']['t1']:.4f}  "
+          f"avg={best['score']['avg']:.4f}")
+    print(f"  Bootstrap: mean={best['bootstrap']['mean']:.4f}  "
+          f"p10={best['bootstrap']['p10']:.4f}  std={best['bootstrap']['std']:.4f}")
+
+    # Check if any lambda changed selections vs vanilla (lambda=0)
+    if 0 in results:
+        vanilla = set(results[0]["selected"])
+        for lam in lambdas:
+            if lam == 0:
+                continue
+            diverse = set(results[lam]["selected"])
+            if diverse != vanilla:
+                added = diverse - vanilla
+                removed = vanilla - diverse
+                print(f"\n  lambda={lam} vs vanilla: +{added} -{removed}")
+
+    # Verbose: show step-by-step for best lambda
+    if verbose and best["steps"]:
+        print(f"\nDetailed steps (lambda={best_lam}):")
+        start_step = len(fix_attn) + (1 if not fix_attn else 0) + 1
+        for step_idx, details in enumerate(best["steps"]):
+            print(f"\n  Step {start_step + step_idx}: Top 5 candidates")
+            print(f"    {'Model':<22} {'EnsScore':>9} {'DivBonus':>9} "
+                  f"{'Combined':>9} {'MeanCorr':>9}")
+            for d in details[:5]:
+                marker = " <--" if d["name"] == best["selected"][
+                    len(fix_attn) + (1 if not fix_attn else 0) + step_idx] else ""
+                print(f"    {d['name']:<22} {d['ens_score']:>9.6f} "
+                      f"{d['div_bonus']:>9.4f} {d['combined']:>9.6f} "
+                      f"{d['mean_corr']:>9.4f}{marker}")
+
+    # Mean pairwise correlation of final ensemble
+    sel = best["selected"]
+    corrs = []
+    for i in range(len(sel)):
+        for j in range(i + 1, len(sel)):
+            corrs.append(corr_matrix[name_to_idx[sel[i]], name_to_idx[sel[j]]])
+    print(f"\n  Mean pairwise correlation of ensemble: {np.mean(corrs):.4f}")
 
 
 def cmd_exhaustive(args):
@@ -955,6 +1180,25 @@ def main():
     p_greedy.add_argument("--max-models", type=int, default=8, help="Max models in ensemble")
     p_greedy.add_argument("--weighted-attn", action="store_true",
                           help="Use 70/30 GRU/attn weighting instead of uniform")
+    p_greedy.add_argument("--diversity-weight", type=float, default=0.0,
+                          help="Diversity nudge weight (0=pure greedy, 0.001=recommended)")
+
+    # greedy-diverse
+    p_gd = subparsers.add_parser("greedy-diverse",
+        help="Greedy selection with diversity sweep (multiple lambdas)")
+    p_gd.add_argument("--pool", default="all", help="Model group or comma-separated names")
+    p_gd.add_argument("--max-models", type=int, default=7, help="Max models in ensemble")
+    p_gd.add_argument("--weighted-attn", action="store_true",
+                       help="Use 70/30 GRU/attn weighting")
+    p_gd.add_argument("--lambdas", nargs="+", type=float,
+                       default=[0, 0.0005, 0.001, 0.002, 0.005],
+                       help="Diversity weight values to sweep")
+    p_gd.add_argument("--fix-attn", nargs="*", default=[],
+                       help="Fix these attention models (only select GRU)")
+    p_gd.add_argument("--bootstrap", type=int, default=200,
+                       help="Bootstrap resamples for stability")
+    p_gd.add_argument("--verbose", action="store_true",
+                       help="Show detailed step-by-step for best lambda")
 
     # diversity
     p_div = subparsers.add_parser("diversity", help="Show prediction correlation matrix")
@@ -984,6 +1228,8 @@ def main():
         cmd_compare_presets(args)
     elif args.command == "greedy":
         cmd_greedy(args)
+    elif args.command == "greedy-diverse":
+        cmd_greedy_diverse(args)
     elif args.command == "diversity":
         cmd_diversity(args)
     elif args.command == "exhaustive":
