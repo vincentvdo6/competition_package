@@ -7,6 +7,7 @@ from src.evaluation.metrics import (
     HuberWeightedLoss,
     WeightedPearsonLoss,
     PearsonCombinedLoss,
+    PearsonPrimaryLoss,
 )
 
 
@@ -45,6 +46,18 @@ def get_loss_function(config: dict) -> nn.Module:
         return PearsonCombinedLoss(
             alpha=alpha, weighted_ratio=ratio, eps=eps,
             target_weights=target_weights,
+        )
+    elif loss_type == 'pearson_primary':
+        alpha = float(training_cfg.get('pearson_primary_alpha', 0.80))
+        warmup_alpha = float(training_cfg.get('warmup_alpha', 0.4))
+        warmup_epochs = int(training_cfg.get('warmup_epochs', 3))
+        huber_delta = float(training_cfg.get('huber_delta', 1.0))
+        target_ratio = float(training_cfg.get('target_ratio', 0.62))
+        eps = float(training_cfg.get('pearson_eps', 1e-6))
+        return PearsonPrimaryLoss(
+            alpha=alpha, warmup_alpha=warmup_alpha,
+            warmup_epochs=warmup_epochs, huber_delta=huber_delta,
+            target_ratio=target_ratio, eps=eps,
         )
     else:
         raise ValueError(f"Unknown loss type: {loss_type}")

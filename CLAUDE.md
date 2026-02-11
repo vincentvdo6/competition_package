@@ -236,88 +236,57 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 
 ---
 
-## Week Plan (Feb 9-15, Claude+Codex collaborated)
+## Week 2 Plan (Feb 15-22, Claude+Codex collaborated)
 
-### Target: 0.2761 (top 100). Current: 0.2675. Gap: +0.0086
-- Attention seed rotation alone **won't close this gap** — need speed gains + new model types
-- ONNX/JIT blocked by Docker constraints → dynamic quantization instead
+### Target: 0.2832 (top 100). Current: 0.2689. Gap: +0.0143.
+- Ensemble tuning exhausted. GRU scaling KILLED. Model quality is the bottleneck.
+- ONNX gives 1844s headroom (2356s vs 4200s) — room for new architecture branches.
 
-### Priority Order (revised after quantization FAIL, 2026-02-10)
+### Priority Order (Codex-agreed, 2026-02-14)
 
-**Quantization KILLED**: Dynamic quantization makes inference 2-2.5x SLOWER for batch=1 hidden=144 models. Overhead dominates at this scale. Benchmarked on both GRU and Attention models.
+| P | Approach | Expected Gain | Risk | Status |
+|---|----------|--------------|------|--------|
+| 1 | **Metric-aligned loss v2** (Pearson-primary after warmup) | +0.004 to +0.008 | Low | TODO |
+| 2 | **Multi-horizon aux heads** (delta/sign heads, train-only) | +0.002 to +0.005 | Low | TODO |
+| 3 | **Small causal Transformer branch** (d=64, 2 blocks) | +0.003 to +0.007 | Medium | TODO |
 
-| P | Approach | Expected LB Gain | Risk | Effort | Status |
-|---|----------|-----------------|------|--------|--------|
-| DONE | **Expand GRU seeds** (13→81, re-rank top-5) | +0.003 to +0.006 | Low | 1 day | top-5 of 81 OVERFITS (-0.0139 gap) |
-| DONE | **TCN as 3rd architecture** (5 seeds, numpy inference) | +0.003 to +0.006 | Medium | 3 days | val +0.0038, awaiting LB result |
-| KILLED | **4G+3A ensemble** — no meaningful val improvement | — | — | — | — |
-| KILLED | **Recency-weighted loss** — both seeds negative | — | — | — | — |
-| KILLED | **Microstructure features** — 5-seed confirmation FAILED | — | — | — | — |
-| KILLED | Dynamic quantization, ONNX, JIT, torch.compile, FP16 | — | — | — | — |
+### Approach #1: Metric-Aligned Loss v2
+**What changes vs current**: Current PearsonCombined uses 60% CombinedLoss + 40% Pearson, with Pearson weighting t0/t1 equally. Changes:
+- Weight Pearson per-target: `0.62*(1-rho_t0) + 0.38*(1-rho_t1)` (match competition metric)
+- After 3-epoch warmup at current ratio, switch to `0.85*Pearson + 0.15*Huber(delta=1.0)`
+- Batch size >= 256 for stable batch-correlation
+- **Kill test**: 3 seeds on GRU, pass if mean val >= +0.0012 over p1 baseline AND >=2/3 positive
 
-### Go/No-Go Gates (Codex-agreed) — ALL RESOLVED
-- **4G+3A**: KILLED — no meaningful val improvement over 5G+2A.
-- **Recency-weighted**: KILLED — both seeds (42: 0.2570, 43: 0.2633) underperformed baseline mean (0.2613).
-- **Microstructure**: KILLED — 5-seed confirmation failed (mean delta +0.0009, needed +0.003).
-- **TCN 3rd architecture**: APPROVED — val +0.0038, strong diversity (corr 0.87 with GRU). Awaiting LB result.
-- **Variant B (cherry-picked GRUs)**: KILLED — gap -0.0139, confirmed top-K from large pool overfits.
+### Approach #2: Multi-Horizon Auxiliary Heads
+**What**: Add training-only heads on shared GRU encoder predicting `delta=t1-t0`, `sign(t0)`, `sign(t1)`. Drop at inference — zero runtime cost.
+- Loss: `L_main + 0.2*L_delta + 0.1*L_sign_t0 + 0.1*L_sign_t1`
+- Anneal aux weights to 0 in last 20% of epochs
+- **Kill test**: 3 seeds on GRU, pass if mean val >= +0.0010 AND >=2/3 positive
 
-### Execution Plan
+### Approach #3: Small Causal Transformer
+**What**: New model class. Input proj F->64, 2 causal encoder blocks (d_model=64, nhead=4, ff=128), output MLP 128->64->2. ~50-60K params.
+- Export via ONNX opset 17. Estimated ~200-400s/model on server.
+- Key value: architectural diversity (expect corr < 0.92 with GRU)
+- **Kill test**: 2-seed quick gate, then 4 seeds if pass. Must add >= +0.0015 to blend AND corr <= 0.92 with existing
 
-**Mon (Feb 10): S2/S4 Results + Quantization + 4G+3A + Seed Expansion**
-- Process S2/S4 results → s2_s43_swap is new champion (0.2675) ✓
-- Quantization benchmark → KILLED (2-2.5x slower) ✓
-- 4G+3A offline evaluation → KILLED (no meaningful improvement) ✓
-- GRU seed expansion: 32 tw2 (Kaggle) + 40 p1 (Colab) = 72 new seeds ✓
-- New top-5 GRU: tw2_s63(0.2736), p1_s79(0.2690), p1_s63(0.2689), p1_s87(0.2685), p1_s67(0.2683) ✓
-- Built 3 submission variants (A/B/C), best val 0.2801 (+0.003 over champion) ✓
-- Recency-weighted loss → KILLED (both seeds negative) ✓
-
-**Tue (Feb 11): Variant B + Correlation-Aware + Micro Kill Test**
-- Variant B submitted → 0.2662 OVERFIT (gap -0.0139, same as exhaustive) ✓
-- Correlation-aware greedy selection → zero effect (lambda sweep found no improvement) ✓
-- Microstructure 1-seed kill test → PASS (+0.0065) but inconclusive ✓
-
-**Wed (Feb 12): Micro Confirmation + TCN Integration**
-- Microstructure 5-seed confirmation → FAILED (mean +0.0009, 3/5 positive). KILLED. ✓
-- TCN kill test (5 seeds s42-46) → ALL VIABLE. Mean 0.2650, best s45 (0.2688). ✓
-- TCN cached (batch inference via model.forward()), diversity confirmed (corr 0.87 with GRU) ✓
-- 5G+2A+2T ensemble: val 0.2808 (+0.0038 over champion). Built champion_tcn_5g2a2t.zip ✓
-- Submitted champion_tcn_5g2a2t.zip → TIMED OUT (PyTorch TCN forward_step too slow) ✓
-
-**Thu (Feb 13): TCNFast Optimization**
-- Built TCNFast class (pure numpy inference) → 26.5x faster (70us vs 1859us per step) ✓
-- Rebuilt as champion_tcn_5g2a2t_v2.zip with TCNFast ✓
-- Verified correctness (max diff 4.77e-07 vs PyTorch) and timing (est ~3303s total) ✓
-- **READY TO SUBMIT**: champion_tcn_5g2a2t_v2.zip (val 0.2808, est LB ~0.2718)
-- Also built champion_tcn_5g2a1t.zip (5G+2A+1T backup, val 0.2806)
-
-**Fri (Feb 14): Submit v2 + Evaluate**
-- Submit champion_tcn_5g2a2t_v2.zip (5G+2A+2T with numpy TCN)
-- If LB improves over champion: try TCN weight variants
-- If timeout again: submit champion_tcn_5g2a1t.zip (5G+2A+1T, fewer TCN)
-
-**Sat-Sun (Feb 15-16): Final Submissions**
-- Build final ensemble archetypes based on all LB data
-- Submit ranked ladder
+### Implementation Order: #1 → #2 → #3
+- #1 is independent (just loss changes), fastest to test
+- #2 depends on #1's loss module being finalized
+- #3 is biggest effort, only after #1/#2 are resolved
 
 ### IMMEDIATE NEXT STEPS (for next chat session)
-1. **Submit champion_tcn_5g2a2t_v2.zip** to Wunderfund platform (NOT Kaggle — this is a Wunderfund competition!)
-   - File: `submissions/champion_tcn_5g2a2t_v2.zip` (7.4MB, verified)
-   - Models: 5 GRU (champion) + 2 Attention + 2 TCN (numpy inference via TCNFast)
-   - Val: 0.2808, est LB: ~0.2718, est timing: ~3303s
-2. **If v2 times out**: Submit `submissions/champion_tcn_5g2a1t.zip` (5G+2A+1T backup, fewer TCN)
-3. **If v2 succeeds**: Record LB score, compare to champion (0.2675), try TCN weight variants
-4. **Decision tree after LB result**:
-   - TCN helps (+0.005+): Train more TCN seeds, try higher TCN weight
-   - TCN neutral (±0.003): Keep current, focus on other improvements
-   - TCN hurts (-0.005+): Drop TCN, revert to 5G+2A champion
+1. **Implement metric-aligned loss v2** in `src/evaluation/metrics.py`:
+   - New class `PearsonPrimaryLoss` with per-target weighting + Huber stabilizer + warmup
+   - New config `gru_pearson_primary_v1.yaml`
+2. **Create kill test notebook** (notebook 14) for Colab
+3. **Train 3 seeds** of GRU with new loss, evaluate
+4. **If pass**: Retrain all model types (GRU, Attn, TCN) with new loss, cache, build ensemble
 
 ### Submission Strategy Rules
 1. **One hypothesis per submission** (no multi-change confounding)
 2. Keep recurring **control** to detect LB noise/drift
 3. **Promotion gates**: offline uplift → runtime safe → LB non-negative → confirm
-4. **Reality check**: need ~0.285+ val to reach top 100. Speed + new objectives are the path, not reshuffling.
+4. **Reality check**: need ~0.285+ val to reach top 100. Model quality is the path, not reshuffling.
 
 ---
 
@@ -331,7 +300,10 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | gru_pearson_v1.yaml | GRU | pearson_combined | Metric-aligned loss |
 | gru_recency_v1.yaml | GRU | combined+recency | KILLED — both seeds negative |
 | gru_microstructure_v1.yaml | GRU | combined | +6 microstructure features — KILLED (5-seed confirmation failed) |
+| gru_large_v1.yaml | GRU (h=256) | pearson_combined | KILLED — t1 collapse, EMA harmful |
+| gru_xl_v1.yaml | GRU (h=384) | pearson_combined | KILLED — never tested (h=256 failed first) |
 | tcn_base_v1.yaml | TCN | combined | Causal TCN, 9K params, 5 seeds trained (s42-46) |
+| tcn_k5_v1.yaml | TCN (k=5) | combined | Wider kernel, 5 seeds viable, best=0.2743 |
 
 ### Core Scripts (scripts/)
 | Script | Purpose |
@@ -342,12 +314,14 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | validate_ensemble_local.py | Cache predictions, greedy/exhaustive search, diversity analysis |
 | evaluate.py | Local evaluation on valid set |
 | test_tcn_fast.py | Benchmark TCNFast (numpy) vs PyTorch speed + correctness |
+| average_checkpoints.py | Average state_dict across epoch checkpoints (unused — EMA killed) |
+| verify_submission.py | Pre-submit checks: keys, normalizer dims, TCNFast, timing |
 
 ### Source Code (src/)
 - `src/models/gru_baseline.py` — GRU with input projection + LayerNorm + output MLP
 - `src/models/gru_attention.py` — GRU + multi-head causal attention
 - `src/models/tcn_model.py` — Causal TCN with depthwise separable convs (tested, 5 seeds viable)
-- `src/training/trainer.py` — Training loop with AMP, grad clip, early stopping
+- `src/training/trainer.py` — Training loop with AMP, grad clip, early stopping, EMA (opt-in), cosine_warmup (opt-in)
 - `src/training/losses.py` — MSE, Combined, Huber, WeightedPearson, PearsonCombined
 - `src/data/preprocessing.py` — DerivedFeatures, TemporalBuffer, InteractionBuilder, MicrostructureBuffer
 - `src/data/dataset.py` — PyTorch Dataset from parquet
@@ -363,6 +337,8 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | 09_gru_seed_expansion_v2.ipynb | Complete — tw2 seeds 54-73 (Kaggle) |
 | 09_colab_p1_seeds.ipynb | Complete — p1 seeds 51-90 (Colab) |
 | 10_colab_microstructure.ipynb | Complete — micro 5-seed confirmation (KILLED) |
+| 12_tcn_seed_expansion.ipynb | Complete — TCN base s47-54 + k5 s42-46 |
+| 13_gru_large_kill_test.ipynb | Complete — larger GRU kill test (ALL KILLED) |
 
 ---
 

@@ -302,6 +302,9 @@ class Trainer:
         for epoch in range(self.epochs):
             epoch_start = time.time()
 
+            if hasattr(self.loss_fn, 'set_epoch'):
+                self.loss_fn.set_epoch(epoch)
+
             train_loss = self.train_epoch()
             history['train_loss'].append(train_loss)
 

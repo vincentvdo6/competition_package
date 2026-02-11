@@ -322,9 +322,137 @@ class PearsonCombinedLoss(nn.Module):
         return loss
 
 
+class PearsonPrimaryLoss(nn.Module):
+    """Metric-aligned loss: Pearson primary with Huber stabilizer.
+
+    Loss = alpha * pearson_component + (1 - alpha) * huber_component
+
+    Where:
+    - pearson_component = target_ratio*(1-rho_t0) + (1-target_ratio)*(1-rho_t1)
+    - huber_component = target_ratio*huber_t0 + (1-target_ratio)*huber_t1
+    - alpha linearly ramps from warmup_alpha to alpha over warmup_epochs
+
+    Key improvements over PearsonCombinedLoss:
+    1. Asymmetric t0/t1 weighting (0.62/0.38 matches competition metric)
+    2. Pearson-dominant after warmup (0.80 vs 0.40)
+    3. Huber stabilizer instead of CombinedLoss (more robust to outliers)
+    """
+
+    def __init__(
+        self,
+        alpha: float = 0.80,
+        warmup_alpha: float = 0.4,
+        warmup_epochs: int = 3,
+        huber_delta: float = 1.0,
+        target_ratio: float = 0.62,
+        eps: float = 1e-6,
+    ):
+        super().__init__()
+        self.alpha = alpha
+        self.warmup_alpha = warmup_alpha
+        self.warmup_epochs = warmup_epochs
+        self.huber_delta = huber_delta
+        self.target_ratio = target_ratio
+        self.eps = eps
+        self.current_epoch = 0
+        self.huber = nn.HuberLoss(reduction='none', delta=huber_delta)
+
+    def set_epoch(self, epoch: int):
+        """Update current epoch for warmup scheduling."""
+        self.current_epoch = epoch
+
+    @property
+    def current_alpha(self) -> float:
+        """Get alpha for current epoch (linear ramp during warmup)."""
+        if self.current_epoch >= self.warmup_epochs:
+            return self.alpha
+        progress = self.current_epoch / max(1, self.warmup_epochs)
+        return self.warmup_alpha + (self.alpha - self.warmup_alpha) * progress
+
+    def _weighted_pearson(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        weights: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute weighted Pearson correlation for a single target."""
+        sum_w = weights.sum()
+        mean_pred = (weights * pred).sum() / sum_w
+        mean_target = (weights * target).sum() / sum_w
+        dev_pred = pred - mean_pred
+        dev_target = target - mean_target
+        cov = (weights * dev_pred * dev_target).sum() / sum_w
+        var_pred = (weights * dev_pred ** 2).sum() / sum_w
+        var_target = (weights * dev_target ** 2).sum() / sum_w
+        std_pred = torch.sqrt(var_pred.clamp(min=self.eps))
+        std_target = torch.sqrt(var_target.clamp(min=self.eps))
+        return cov / (std_pred * std_target)
+
+    def forward(
+        self,
+        predictions: torch.Tensor,
+        targets: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        temporal_weights: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Compute Pearson-primary loss with Huber stabilizer.
+
+        Args:
+            predictions: (batch, seq_len, 2) predicted values
+            targets: (batch, seq_len, 2) true values
+            mask: (batch, seq_len) bool mask for valid predictions
+            temporal_weights: accepted for interface compatibility (unused)
+
+        Returns:
+            Scalar loss value
+        """
+        if mask is not None and mask.sum() == 0:
+            return torch.tensor(0.0, device=predictions.device, requires_grad=True)
+
+        predictions = predictions.clamp(-6.0, 6.0)
+
+        if mask is not None:
+            mask_flat = mask.reshape(-1)
+            pred_flat = predictions.reshape(-1, 2)[mask_flat]
+            target_flat = targets.reshape(-1, 2)[mask_flat]
+        else:
+            pred_flat = predictions.reshape(-1, 2)
+            target_flat = targets.reshape(-1, 2)
+
+        if pred_flat.shape[0] < 2:
+            return torch.tensor(0.0, device=predictions.device, requires_grad=True)
+
+        # Pearson component: asymmetric t0/t1 weighting
+        w_t0 = torch.abs(target_flat[:, 0]).clamp(min=self.eps)
+        w_t1 = torch.abs(target_flat[:, 1]).clamp(min=self.eps)
+        rho_t0 = self._weighted_pearson(pred_flat[:, 0], target_flat[:, 0], w_t0)
+        rho_t1 = self._weighted_pearson(pred_flat[:, 1], target_flat[:, 1], w_t1)
+        pearson_loss = (
+            self.target_ratio * (1.0 - rho_t0)
+            + (1.0 - self.target_ratio) * (1.0 - rho_t1)
+        )
+
+        # Huber component: per-target with same asymmetric weighting
+        huber_t0 = self.huber(pred_flat[:, 0], target_flat[:, 0]).mean()
+        huber_t1 = self.huber(pred_flat[:, 1], target_flat[:, 1]).mean()
+        huber_loss = (
+            self.target_ratio * huber_t0
+            + (1.0 - self.target_ratio) * huber_t1
+        )
+
+        # Combine with warmup-ramped alpha
+        alpha = self.current_alpha
+        loss = alpha * pearson_loss + (1.0 - alpha) * huber_loss
+
+        if not loss.isfinite():
+            return torch.tensor(0.0, device=predictions.device, requires_grad=True)
+
+        return loss
+
+
 class HuberWeightedLoss(nn.Module):
     """Weighted Huber loss for robust training.
-    
+
     Combines robustness to outliers (Huber) with emphasis
     on large movements (amplitude weighting).
     """
