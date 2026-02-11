@@ -16,14 +16,71 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
+import torch
+import torch.nn as nn
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+
+class _GRUStepWrapper(nn.Module):
+    """Wrapper making GRU forward_step ONNX-exportable with explicit hidden state."""
+
+    def __init__(self, input_proj, input_norm, gru, output_proj):
+        super().__init__()
+        self.input_proj = input_proj
+        self.input_norm = input_norm
+        self.gru = gru
+        self.output_proj = output_proj
+
+    def forward(self, x: torch.Tensor, hidden: torch.Tensor):
+        x = self.input_proj(x)
+        x = self.input_norm(x)
+        x = x.unsqueeze(1)
+        gru_out, new_hidden = self.gru(x, hidden)
+        prediction = self.output_proj(gru_out.squeeze(1))
+        return prediction, new_hidden
+
+
+def _export_gru_to_onnx(ckpt_path: Path, model_cfg: dict, onnx_path: Path) -> None:
+    """Export a GRU checkpoint to ONNX for step-by-step inference."""
+    from src.models.gru_baseline import GRUBaseline
+
+    config = {"model": model_cfg}
+    model = GRUBaseline(config)
+    ckpt = torch.load(str(ckpt_path), map_location="cpu", weights_only=True)
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.eval()
+
+    wrapper = _GRUStepWrapper(
+        model.input_proj, model.input_norm, model.gru, model.output_proj
+    )
+    wrapper.eval()
+
+    input_size = model_cfg["input_size"]
+    hidden_size = model_cfg["hidden_size"]
+    num_layers = model_cfg["num_layers"]
+
+    dummy_x = torch.randn(1, input_size)
+    dummy_h = torch.zeros(num_layers, 1, hidden_size)
+
+    torch.onnx.export(
+        wrapper,
+        (dummy_x, dummy_h),
+        str(onnx_path),
+        input_names=["input", "hidden_in"],
+        output_names=["prediction", "hidden_out"],
+        dynamic_axes=None,
+        opset_version=17,
+        do_constant_folding=True,
+    )
 
 
 def _normalize_weights(weights: List[float], n_models: int, label: str) -> List[float]:
@@ -159,6 +216,7 @@ def _prepare_model_specs(
     checkpoint_paths: List[Path],
     normalizer_paths: List[Path],
     strict_input_size: bool,
+    use_onnx: bool = False,
 ) -> Tuple[List[dict], Dict[Path, str]]:
     model_specs: List[dict] = []
 
@@ -199,6 +257,11 @@ def _prepare_model_specs(
             "dilations": model_cfg.get("dilations", [1, 2, 4, 8, 16, 32]),
         }
 
+        # Use ONNX for GRU models (7x faster inference)
+        is_onnx = use_onnx and model_type == "gru"
+        if is_onnx:
+            model_cfg_clean["inference"] = "onnx"
+
         derived = bool(data_cfg.get("derived_features", False))
         temporal = bool(data_cfg.get("temporal_features", False) and derived)
         interaction = bool(data_cfg.get("interaction_features", False))
@@ -223,10 +286,12 @@ def _prepare_model_specs(
             norm_name = "normalizer.npz" if len(unique_norm_names) == 0 else f"normalizer_{len(unique_norm_names)}.npz"
             unique_norm_names[norm_path] = norm_name
 
+        file_ext = ".onnx" if is_onnx else ".pt"
         model_specs.append(
             {
-                "checkpoint": f"model_{i}.pt",
+                "checkpoint": f"model_{i}{file_ext}",
                 "checkpoint_src": str(ckpt_path),
+                "is_onnx": is_onnx,
                 "normalizer": unique_norm_names[norm_path],
                 "normalizer_src": str(norm_path),
                 "model": model_cfg_clean,
@@ -254,6 +319,7 @@ import os
 import numpy as np
 import torch
 import torch.nn as nn
+import onnxruntime as ort
 
 
 def _safe_torch_load(path):
@@ -551,9 +617,9 @@ class TCNResBlock(nn.Module):
         self.ks = ks
         self.dil = dil
         self.buf_len = (ks - 1) * dil + 1
-        self.dw = nn.Conv1d(ch, ch, ks, dilation=dil, groups=ch, bias=True)
-        self.act = nn.SiLU()
-        self.pw = nn.Conv1d(ch, ch, 1, bias=True)
+        self.dw_conv = nn.Conv1d(ch, ch, ks, dilation=dil, groups=ch, bias=True)
+        self.activation = nn.SiLU()
+        self.pw_conv = nn.Conv1d(ch, ch, 1, bias=True)
 
     def forward_step(self, x, buf, ptr):
         buf[:, :, ptr] = x
@@ -562,11 +628,11 @@ class TCNResBlock(nn.Module):
             taps.append(buf[:, :, (ptr - i * self.dil) % self.buf_len])
         stack = torch.stack(list(reversed(taps)), dim=2)
         out = torch.nn.functional.conv1d(
-            stack, self.dw.weight, self.dw.bias, groups=self.ch
+            stack, self.dw_conv.weight, self.dw_conv.bias, groups=self.ch
         ).squeeze(2)
-        out = self.act(out)
+        out = self.activation(out)
         out = torch.nn.functional.conv1d(
-            out.unsqueeze(2), self.pw.weight, self.pw.bias
+            out.unsqueeze(2), self.pw_conv.weight, self.pw_conv.bias
         ).squeeze(2)
         return out + x, buf, (ptr + 1) % self.buf_len
 
@@ -582,8 +648,8 @@ class TCNModel(nn.Module):
         self.ch = ch
         self.input_proj = nn.Linear(input_size, ch)
         self.blocks = nn.ModuleList([TCNResBlock(ch, ks, d) for d in dils])
-        self.out_norm = nn.LayerNorm(ch)
-        self.out_head = nn.Linear(ch, output_size)
+        self.output_norm = nn.LayerNorm(ch)
+        self.output_head = nn.Linear(ch, output_size)
 
     def forward_step(self, x, hidden=None, need_pred=True):
         if x.dim() == 1:
@@ -602,9 +668,91 @@ class TCNModel(nn.Module):
             new_hidden.append((buf, new_ptr))
         if not need_pred:
             return None, new_hidden
-        x = self.out_norm(x)
-        pred = self.out_head(x)
+        x = self.output_norm(x)
+        pred = self.output_head(x)
         return pred, new_hidden
+
+
+class TCNFast:
+    \"\"\"Numpy-only TCN inference — eliminates PyTorch dispatch overhead.\"\"\"
+
+    def __init__(self, pt):
+        ch = pt.ch
+        self.ch = ch
+        self.inp_w = pt.input_proj.weight.data.numpy().copy()
+        self.inp_b = pt.input_proj.bias.data.numpy().copy()
+        self.n_blocks = len(pt.blocks)
+        self.dw_w = []; self.dw_b = []; self.pw_w = []; self.pw_b = []
+        self.buf_lens = []; self.dils = []; self.ks_list = []
+        for b in pt.blocks:
+            self.dw_w.append(b.dw_conv.weight.data.numpy().reshape(ch, b.ks).copy())
+            self.dw_b.append(b.dw_conv.bias.data.numpy().copy())
+            self.pw_w.append(b.pw_conv.weight.data.numpy().reshape(ch, ch).copy())
+            self.pw_b.append(b.pw_conv.bias.data.numpy().copy())
+            self.buf_lens.append(b.buf_len)
+            self.dils.append(b.dil)
+            self.ks_list.append(b.ks)
+        self.norm_w = pt.output_norm.weight.data.numpy().copy()
+        self.norm_b = pt.output_norm.bias.data.numpy().copy()
+        self.head_w = pt.output_head.weight.data.numpy().copy()
+        self.head_b = pt.output_head.bias.data.numpy().copy()
+
+    def eval(self):
+        return self
+
+    def forward_step(self, x_tensor, hidden=None, need_pred=True):
+        x = x_tensor.numpy().ravel() if hasattr(x_tensor, 'numpy') else np.asarray(x_tensor, dtype=np.float32).ravel()
+        h = self.inp_w @ x + self.inp_b
+        if hidden is None:
+            hidden = [(np.zeros((self.ch, bl), dtype=np.float32), 0) for bl in self.buf_lens]
+        new_hidden = []
+        for i in range(self.n_blocks):
+            buf, ptr = hidden[i]
+            buf[:, ptr] = h
+            ks = self.ks_list[i]; dil = self.dils[i]; bl = self.buf_lens[i]
+            taps = np.empty((self.ch, ks), dtype=np.float32)
+            for j in range(ks):
+                taps[:, j] = buf[:, (ptr - (ks - 1 - j) * dil) % bl]
+            out = (taps * self.dw_w[i]).sum(1) + self.dw_b[i]
+            out = out / (1.0 + np.exp(-np.clip(out, -15, 15)))
+            out = self.pw_w[i] @ out + self.pw_b[i]
+            h = out + h
+            new_hidden.append((buf, (ptr + 1) % bl))
+        if not need_pred:
+            return None, new_hidden
+        m = h.mean(); v = ((h - m) ** 2).mean()
+        h = (h - m) / np.sqrt(v + 1e-5) * self.norm_w + self.norm_b
+        pred = self.head_w @ h + self.head_b
+        return pred, new_hidden
+
+
+class OnnxGRU:
+    \"\"\"ONNX Runtime GRU for step-by-step inference — 7x faster than PyTorch.\"\"\"
+
+    def __init__(self, onnx_path, hidden_size, num_layers):
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        sess_options = ort.SessionOptions()
+        sess_options.intra_op_num_threads = 1
+        sess_options.inter_op_num_threads = 1
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        self.sess = ort.InferenceSession(onnx_path, sess_options, providers=['CPUExecutionProvider'])
+
+    def eval(self):
+        return self
+
+    def forward_step(self, x, hidden=None, need_pred=True):
+        if hidden is None:
+            hidden = np.zeros((self.num_layers, 1, self.hidden_size), dtype=np.float32)
+        x_np = x.numpy().reshape(1, -1) if hasattr(x, 'numpy') else np.asarray(x, dtype=np.float32).reshape(1, -1)
+        h_np = hidden if isinstance(hidden, np.ndarray) else hidden.numpy()
+        prediction, new_hidden = self.sess.run(
+            ['prediction', 'hidden_out'],
+            {'input': x_np, 'hidden_in': h_np}
+        )
+        if not need_pred:
+            return None, new_hidden
+        return prediction, new_hidden
 
 
 def build_model(model_cfg):
@@ -635,10 +783,19 @@ class PredictionModel:
         self.micro_buffers = []
 
         for spec in self.cfg['models']:
-            model = build_model(spec['model'])
-            ckpt = _safe_torch_load(os.path.join(base_dir, spec['checkpoint']))
-            model.load_state_dict(ckpt['model_state_dict'])
-            model.eval()
+            inference = spec['model'].get('inference', 'pytorch')
+            if inference == 'onnx':
+                onnx_path = os.path.join(base_dir, spec['checkpoint'])
+                model = OnnxGRU(
+                    onnx_path,
+                    hidden_size=int(spec['model']['hidden_size']),
+                    num_layers=int(spec['model']['num_layers']),
+                )
+            else:
+                model = build_model(spec['model'])
+                ckpt = _safe_torch_load(os.path.join(base_dir, spec['checkpoint']))
+                model.load_state_dict(ckpt['model_state_dict'])
+                model.eval()
 
             self.models.append(model)
             self.hiddens.append(None)
@@ -654,6 +811,10 @@ class PredictionModel:
                 self.micro_buffers.append(MicrostructureBuffer())
             else:
                 self.micro_buffers.append(None)
+
+        for i, spec in enumerate(self.cfg['models']):
+            if spec['model'].get('type') == 'tcn' and spec['model'].get('inference') != 'onnx':
+                self.models[i] = TCNFast(self.models[i])
 
         self.n_models = len(self.models)
 
@@ -748,7 +909,10 @@ class PredictionModel:
                     x, self.hiddens[i], need_pred=need_pred,
                 )
                 if need_pred:
-                    pred_arr[i] = pred.squeeze(0).numpy()
+                    if isinstance(pred, np.ndarray):
+                        pred_arr[i] = pred
+                    else:
+                        pred_arr[i] = pred.squeeze(0).numpy()
 
         if not need_pred:
             return None
@@ -833,6 +997,11 @@ def main() -> None:
         help="Disable strict validation of model.input_size vs preprocessing flags",
     )
     parser.add_argument(
+        "--onnx",
+        action="store_true",
+        help="Export GRU models to ONNX for 7x faster inference",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default="submissions/ensemble.zip",
@@ -852,6 +1021,7 @@ def main() -> None:
         checkpoint_paths=checkpoint_paths,
         normalizer_paths=normalizer_paths,
         strict_input_size=not args.no_strict_input_size,
+        use_onnx=args.onnx,
     )
 
     ensemble_cfg = {
@@ -873,6 +1043,10 @@ def main() -> None:
 
     solution_code = generate_ensemble_solution()
 
+    # Create temp directory for ONNX exports
+    tmpdir = tempfile.mkdtemp() if args.onnx else None
+    n_onnx = 0
+
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("solution.py", solution_code)
         zf.writestr("ensemble_config.json", json.dumps(ensemble_cfg, indent=2))
@@ -881,13 +1055,29 @@ def main() -> None:
         for norm_path, norm_name in unique_norm_names.items():
             zf.write(norm_path, norm_name)
 
-        # Write checkpoints
+        # Write checkpoints (or ONNX exports)
         for m in model_specs:
-            zf.write(m["checkpoint_src"], m["checkpoint"])
+            if m.get("is_onnx"):
+                onnx_file = os.path.join(tmpdir, m["checkpoint"])
+                print(f"  Exporting {m['checkpoint']} to ONNX...")
+                _export_gru_to_onnx(
+                    Path(m["checkpoint_src"]),
+                    m["model"],
+                    Path(onnx_file),
+                )
+                zf.write(onnx_file, m["checkpoint"])
+                n_onnx += 1
+            else:
+                zf.write(m["checkpoint_src"], m["checkpoint"])
+
+    # Clean up temp dir
+    if tmpdir:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
     size_kb = out_path.stat().st_size / 1024.0
     print(f"Ensemble submission exported: {out_path}")
-    print(f"  Models: {n_models}")
+    print(f"  Models: {n_models} ({n_onnx} ONNX, {n_models - n_onnx} PyTorch/TCNFast)")
     print(f"  Global weights: {weights}")
     if target_weights is not None:
         print(f"  Per-target weights t0: {target_weights['t0']}")

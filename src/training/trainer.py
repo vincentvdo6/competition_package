@@ -8,11 +8,12 @@ Supports both CPU and GPU (CUDA/ROCm):
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import OneCycleLR, ReduceLROnPlateau
+from torch.optim.lr_scheduler import OneCycleLR, ReduceLROnPlateau, LambdaLR
 from torch.utils.data import DataLoader
 from torch.amp import autocast, GradScaler
 import numpy as np
 import json
+import math
 import os
 import time
 import sys
@@ -31,6 +32,38 @@ def setup_cpu_performance():
     torch.set_num_threads(n_cores)
     # Use remaining threads for inter-op parallelism
     torch.set_num_interop_threads(max(1, n_cores // 4))
+
+
+class EMA:
+    """Exponential Moving Average of model parameters."""
+
+    def __init__(self, model: nn.Module, decay: float = 0.999):
+        self.decay = decay
+        self.shadow = {}
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                self.shadow[name] = param.data.clone()
+
+    @torch.no_grad()
+    def update(self, model: nn.Module):
+        for name, param in model.named_parameters():
+            if name in self.shadow:
+                self.shadow[name].mul_(self.decay).add_(param.data, alpha=1 - self.decay)
+
+    def apply(self, model: nn.Module) -> dict:
+        """Swap model params with EMA params. Returns backup for restore."""
+        backup = {}
+        for name, param in model.named_parameters():
+            if name in self.shadow:
+                backup[name] = param.data.clone()
+                param.data.copy_(self.shadow[name])
+        return backup
+
+    def restore(self, model: nn.Module, backup: dict):
+        """Restore model params from backup."""
+        for name, param in model.named_parameters():
+            if name in backup:
+                param.data.copy_(backup[name])
 
 
 class Trainer:
@@ -79,6 +112,22 @@ class Trainer:
                 steps_per_epoch=len(train_loader),
             )
             self.sched_type = 'one_cycle'
+        elif sched_type == 'cosine_warmup':
+            base_lr = float(train_cfg.get('lr', 0.001))
+            warmup_frac = float(sched_cfg.get('warmup_fraction', 0.1))
+            min_lr = float(sched_cfg.get('min_lr', 2e-5))
+            min_lr_ratio = min_lr / base_lr
+            warmup_epochs = max(1, int(warmup_frac * self.epochs))
+            total_epochs = self.epochs
+
+            def lr_lambda(epoch):
+                if epoch < warmup_epochs:
+                    return (epoch + 1) / warmup_epochs
+                progress = (epoch - warmup_epochs) / max(1, total_epochs - warmup_epochs)
+                return min_lr_ratio + (1 - min_lr_ratio) * 0.5 * (1 + math.cos(math.pi * progress))
+
+            self.scheduler = LambdaLR(self.optimizer, lr_lambda)
+            self.sched_type = 'cosine_warmup'
         else:
             self.scheduler = ReduceLROnPlateau(
                 self.optimizer,
@@ -95,6 +144,17 @@ class Trainer:
             and device.type == 'cuda'
         )
         self.scaler = GradScaler('cuda', enabled=self.use_amp)
+
+        # EMA (Exponential Moving Average)
+        self.use_ema = bool(train_cfg.get('ema', False))
+        if self.use_ema:
+            ema_decay = float(train_cfg.get('ema_decay', 0.999))
+            self.ema = EMA(model, decay=ema_decay)
+        else:
+            self.ema = None
+
+        # Periodic checkpoint saving (for checkpoint averaging)
+        self.save_every = int(config.get('logging', {}).get('save_every', 0))
 
         # Logging
         log_cfg = config.get('logging', {})
@@ -155,6 +215,9 @@ class Trainer:
 
             self.scaler.step(self.optimizer)
             self.scaler.update()
+
+            if self.ema is not None:
+                self.ema.update(self.model)
 
             if self.sched_type == 'one_cycle':
                 self.scheduler.step()
@@ -223,6 +286,8 @@ class Trainer:
         )
         print(f"Batch size: {self.train_loader.batch_size}", flush=True)
         print(f"Scheduler: {self.sched_type}", flush=True)
+        if self.use_ema:
+            print(f"EMA: decay={self.ema.decay}", flush=True)
         print(f"Progress mode: {'tqdm' if self.use_tqdm else 'batch logs'}", flush=True)
         print("-" * 60, flush=True)
 
@@ -240,12 +305,23 @@ class Trainer:
             train_loss = self.train_epoch()
             history['train_loss'].append(train_loss)
 
+            # Swap to EMA weights for validation if enabled
+            ema_backup = None
+            if self.ema is not None:
+                ema_backup = self.ema.apply(self.model)
+
             avg_score, scores = self.validate()
             history['val_scores'].append(scores)
 
-            # Scheduler step (ReduceLROnPlateau steps per epoch, OneCycle steps per batch)
+            # Restore training weights after validation
+            if ema_backup is not None:
+                self.ema.restore(self.model, ema_backup)
+
+            # Scheduler step
             if self.sched_type == 'reduce_on_plateau':
                 self.scheduler.step(avg_score)
+            elif self.sched_type == 'cosine_warmup':
+                self.scheduler.step()
             current_lr = self.optimizer.param_groups[0]['lr']
             history['learning_rates'].append(current_lr)
 
@@ -265,7 +341,7 @@ class Trainer:
                 self.epochs_without_improvement = 0
                 prefix = self.config.get('logging', {}).get('checkpoint_prefix', None)
                 ckpt_name = f"{prefix}.pt" if prefix else 'best_model.pt'
-                self._save_checkpoint('best_model.pt')
+                self._save_checkpoint('best_model.pt', use_ema=True)
                 print(f"  -> New best model saved! ({ckpt_name})", flush=True)
             else:
                 self.epochs_without_improvement += 1
@@ -277,6 +353,10 @@ class Trainer:
                     )
                     break
 
+            # Periodic checkpoint saving (for checkpoint averaging)
+            if self.save_every > 0 and (epoch + 1) % self.save_every == 0:
+                self._save_epoch_checkpoint(epoch + 1, use_ema=True)
+
         total_time = time.time() - total_start
         print("-" * 60, flush=True)
         print(f"Training complete in {total_time:.0f}s ({total_time/60:.1f}min)", flush=True)
@@ -287,18 +367,28 @@ class Trainer:
 
         return history
 
-    def _save_checkpoint(self, filename: str) -> None:
+    def _save_checkpoint(self, filename: str, use_ema: bool = False) -> None:
         """Save model checkpoint.
 
         Args:
             filename: Checkpoint filename (may be overridden by checkpoint_prefix)
+            use_ema: If True and EMA is active, save EMA weights instead of training weights
         """
         prefix = self.config.get('logging', {}).get('checkpoint_prefix', None)
         if prefix:
             filename = f"{prefix}.pt"
         path = os.path.join(self.log_dir, filename)
+
+        # Use EMA weights if requested and available
+        if use_ema and self.ema is not None:
+            backup = self.ema.apply(self.model)
+            state_dict = self.model.state_dict()
+            self.ema.restore(self.model, backup)
+        else:
+            state_dict = self.model.state_dict()
+
         torch.save({
-            'model_state_dict': self.model.state_dict(),
+            'model_state_dict': state_dict,
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
             'config': self.config,
@@ -306,6 +396,20 @@ class Trainer:
             'best_epoch': self.best_epoch,
             'seed': self.config.get('seed', None)
         }, path)
+
+    def _save_epoch_checkpoint(self, epoch: int, use_ema: bool = False) -> None:
+        """Save lightweight checkpoint for later averaging (model weights only)."""
+        prefix = self.config.get('logging', {}).get('checkpoint_prefix', 'model')
+
+        if use_ema and self.ema is not None:
+            backup = self.ema.apply(self.model)
+            state_dict = self.model.state_dict()
+            self.ema.restore(self.model, backup)
+        else:
+            state_dict = self.model.state_dict()
+
+        path = os.path.join(self.log_dir, f"{prefix}_epoch{epoch}.pt")
+        torch.save({'model_state_dict': state_dict}, path)
 
     def _log_experiment(self, history: Dict) -> None:
         """Append experiment to JSONL log.
@@ -383,7 +487,6 @@ class Trainer:
                 u = min((t - start_step) / span, 1.0)
                 if ramp_type == 'exponential':
                     # Exponential ramp: w_min at u=0, w_max at u=1
-                    import math
                     weights[t] = w_min * (w_max / w_min) ** u
                 elif ramp_type == 'step':
                     # Step function: w_min for first half, w_max for second half

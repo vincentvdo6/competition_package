@@ -1,0 +1,44 @@
+# GRU XL v1 (h=384, improved training recipe)
+# Only train if h=256 (gru_large_v1) passes kill test.
+# Hypothesis: even more capacity for complex LOB patterns.
+
+model:
+  type: gru
+  input_size: 42
+  hidden_size: 384
+  num_layers: 2
+  dropout: 0.12
+  output_size: 2
+
+training:
+  lr: 0.0005
+  weight_decay: 1e-4
+  epochs: 60
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 14
+  loss: pearson_combined
+  pearson_alpha: 0.6
+  weighted_ratio: 0.62
+  pearson_eps: 1e-6
+  use_amp: true
+  ema: true
+  ema_decay: 0.9992
+  scheduler:
+    type: cosine_warmup
+    warmup_fraction: 0.10
+    min_lr: 2e-5
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: true
+  derived_features: true
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5

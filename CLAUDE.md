@@ -48,13 +48,25 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 - **Prize Pool**: $13,600
 - **Goal**: Top 100 placement
 
-### Inference Constraints (Scoring Environment)
-- **CPU**: 1 vCPU core (no GPU)
-- **RAM**: 16 GB
-- **Time limit**: 4200 seconds on full test dataset
-- **No internet**: Offline execution
-- **Docker**: python:3.11-slim-bookworm with PyTorch CPU
-- **Submission format**: zip with solution.py + checkpoints + normalizers, max 20MB
+### Scoring Environment (from docs)
+- **Docker**: `python:3.11-slim-bookworm` with PyTorch CPU (no GPU)
+- **CPU**: 1 vCPU core | **RAM**: 16 GB | **Storage**: Local SSD
+- **Time limit**: Docs say 60 minutes, but actual timeouts observed at **4200s (70 min)**
+- **No internet**: Offline execution, all caches redirected to /app/
+- **Submission**: `.zip` with `solution.py` at root + model files, max 20MB
+
+### Submission Interface (from docs)
+- `solution.py` must define `class PredictionModel` with `predict(self, data_point)` method
+- `data_point` attributes: `seq_ix` (int), `step_in_seq` (int), `need_prediction` (bool), `state` (np.ndarray)
+- Return `None` when `need_prediction is False`, else `np.ndarray` of shape `(2,)` for (t0, t1)
+- Must reset recurrent state when `seq_ix` changes
+
+### Test Data (from docs)
+- **Test & Final sets**: ~1,500 sequences each (similar to validation's 1,444)
+- **Total steps**: ~1.5M (1,500 seq x 1,000 steps)
+- **Scored steps**: 99-999 per sequence (901 steps x ~1,500 seq = ~1.35M scored predictions)
+- **Metric**: Weighted Pearson Correlation, averaged across t0 and t1
+- **Two leaderboards**: Public (test set) during competition, Private (final set) for prizes
 
 ### Data Format
 - **Train**: 10,721 sequences x 1000 steps each
@@ -69,7 +81,7 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 
 ---
 
-## Current State (as of 2026-02-10)
+## Current State (as of 2026-02-13)
 
 ### Leaderboard Scores (all submissions ever)
 | Submission | Score | Models | Time | Notes |
@@ -82,13 +94,19 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | best_gru_combo (exhaustive) | 0.2647 | 5G+2A | 3164s | OVERFITS val |
 | champion_clone_v2 | 0.2654 | 5G+2A | 2925s | Top-5 GRU + old attn |
 | champion_v4_s50swap | 0.2668 | 5G+2A | 2895s | Old champion |
-| **s2_s43_swap** | **0.2675** | **5G+2A** | **3106s** | **CURRENT CHAMPION** |
+| s2_s43_swap | 0.2675 | 5G+2A | 3106s | Previous champion |
+| champion_tcn_5g2a2t_v2 | 0.2683 | 5G+2A+2T | 3297s | TCN base s45+s46 |
+| onnx_champion_control | 0.2683 | 5G+2A+2T ONNX | 2321s | ONNX lossless confirmed |
+| **champion_mixed_tcn_v1** | **0.2689** | **5G+2A+2T** | **3308s** | **CURRENT CHAMPION** |
+| champion_tcn_5g2a1t_v2 | 0.2681 | 5G+2A+1T | 3829s | 1T ablation |
+| onnx_9g2a2t_v1 | 0.2677 | 9G+2A+2T ONNX | 3186s | 9G HURT, diluted |
 | variant_b_2tw2_3p1 | 0.2662 | 5G+2A | 2975s | OVERFIT: top-5 from 81 seeds |
+| s4_nb07s48_swap | 0.2646 | 5G+2A | 3670s | nb07_s48 worse than s50 |
 | champion_v4_top2attn | TIMEOUT | 5G+2A | 4199s | Server variance |
 | 5 GRU + 3 attn uniform | TIMEOUT | 5G+3A | 4200s | Too many attn |
-| s4_nb07s48_swap | 0.2646 | 5G+2A | 3670s | nb07_s48 worse than s50 |
+| champion_tcn_5g2a2t v1 | TIMEOUT | 5G+2A+2T | 4200s | PyTorch TCN too slow |
 
-### Val-to-LB Calibration (9 data points)
+### Val-to-LB Calibration (10 data points)
 | Submission | Val | LB | Gap | # Models |
 |-----------|-----|-----|-----|----------|
 | Single GRU | 0.2584 | 0.2580 | -0.0004 | 1 |
@@ -100,21 +118,28 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | s2_s43_swap | 0.2770 | 0.2675 | -0.0095 | 7 |
 | s4_nb07s48_swap | 0.2749 | 0.2646 | -0.0103 | 7 |
 | variant_b_2tw2_3p1 | 0.2801 | 0.2662 | **-0.0139** | 7 (OVERFIT: top-5 of 81) |
+| **champion_tcn_5g2a2t_v2** | **0.2808** | **0.2683** | **-0.0125** | **9 (5G+2A+2T, TCNFast)** |
+| champion_tcn_5g2a2t v1 | 0.2808 | TIMEOUT | — | 9 (PyTorch TCN too slow) |
 - **7-model gap (well-selected)**: mean -0.0088, range [-0.0103, -0.0080]
+- **9-model gap (5G+2A+2T)**: -0.0125 — wider than 7-model, expected with more models
 - **Cherry-picked from large pool**: gap -0.0139 (same as exhaustive -0.0141)
 - **RULE: Selecting top-K from pool >20 seeds OVERFITS. Use contiguous/pre-registered seed ranges.**
 
-### Champion s2_s43_swap Details
-- **LB Score**: 0.2675 (+0.0007 over previous champion v4_s50swap)
-- **GRUs** (70% weight, 0.14 each): p1_s47, tw2_s50, tw2_s48, p1_s45, p1_s50
-- **Attention** (30% weight, 0.15 each): attn_comb_s43 (old) + attn_nb07_s50 (new)
-- **Key insight**: attn_comb_s43 > attn_comb_s42 — old attention seed rotation works
-- **S4 result**: s4_nb07s48_swap scored 0.2646, confirming nb07_s50 >> nb07_s48 on LB
+### Champion champion_mixed_tcn_v1 Details
+- **LB Score**: 0.2689 (+0.0006 over previous champion_tcn_5g2a2t_v2)
+- **GRUs** (54% weight, 0.108 each): p1_s47, tw2_s50, tw2_s48, p1_s45, p1_s50
+- **Attention** (26% weight, 0.130 each): attn_comb_s43 (old) + attn_nb07_s50 (new)
+- **TCN** (20% weight, 0.100 each): tcn_base_s48 + tcn_k5_s42 (mixed k3/k5, TCNFast numpy)
+- **Key insight**: Mixed TCN architectures (base k=3 + k5) beat same-config pair (s45+s46). k5 adds diversity.
+- **ONNX version built**: onnx_champion_mixed_tcn_v1.zip — same models, ONNX GRU, est ~1905s (55% margin)
+- **Val-LB gap**: -0.0125 (wider than 7-model -0.0088, expected with 9 models)
 
 ### Timing Data
 - **Per GRU**: ~320s (stable across all submissions)
 - **Per Attention**: 665-952s (HUGE server variance)
+- **Per TCN (TCNFast)**: ~40s estimated (from 3297s total)
 - **Server variance**: 45% — identical 5G+2A ran in 2895s, 3164s, and timed out at 4199s
+- **5G+2A+2T**: 3297s with 21.5% margin to 4200s budget
 - **MUST budget >30% margin** for timeout safety
 
 ---
@@ -163,15 +188,14 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 - **Total**: 81 GRU seeds trained, 96 models registered in validate_ensemble_local.py
 - **Cached**: 28 models in cache/predictions/ (13 original + 6 new expansion + 10 attention)
 
-### Submission Variants (ready to submit)
-| Variant | GRUs | Val | Bootstrap p10 | Std | Est LB |
-|---------|------|-----|---------------|-----|--------|
-| **B (2tw2+3p1)** | tw2_s63/s60 + p1_s79/s63/s87 | **0.2801** | **0.2669** | 0.0098 | ~0.2711 |
-| A (1tw2+4p1) | tw2_s63 + p1_s79/s63/s87/s67 | 0.2800 | 0.2656 | 0.0105 | ~0.2710 |
-| C (3tw2+2p1) | tw2_s63/s60/s50 + p1_s79/s63 | 0.2792 | 0.2665 | 0.0094 | ~0.2702 |
-| Champion | tw2_s50/s48 + p1_s47/s45/s50 | 0.2770 | 0.2652 | 0.0090 | 0.2675 (actual) |
+### Submission Variants — GRU-only (DO NOT SUBMIT — cherry-pick from 81 seeds overfits)
+| Variant | GRUs | Val | LB | Gap | Notes |
+|---------|------|-----|----|-----|-------|
+| B (2tw2+3p1) | tw2_s63/s60 + p1_s79/s63/s87 | 0.2801 | **0.2662** | **-0.0139** | OVERFIT |
+| A, C | similar cherry-picked | ~0.2800 | — | — | DO NOT SUBMIT |
+| Champion | tw2_s50/s48 + p1_s47/s45/s50 | 0.2770 | **0.2675** | -0.0095 | Contiguous seeds = safe |
 
-**Codex recommendation**: Submit B first (best p10 + diversity), then C, then A.
+**Lesson confirmed**: Selecting top-K GRU from pool of 81 seeds gives -0.014 gap, identical to exhaustive search overfitting. Only contiguous/pre-registered seed ranges are safe.
 
 ### GRU Models (28 cached in cache/predictions/)
 
@@ -189,6 +213,23 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | attn_comb_s42 | — | 1.000 (old, in champion) |
 | attn_comb_s43 | — | 0.895 (most diverse old) |
 
+### TCN Models (5 cached in cache/predictions/)
+| Model | Val | Status |
+|-------|-----|--------|
+| tcn_s45 | 0.2688 | cached + staged |
+| tcn_s42 | 0.2672 | cached + staged |
+| tcn_s43 | 0.2652 | cached + staged |
+| tcn_s44 | 0.2637 | cached + staged |
+| tcn_s46 | 0.2601 | cached + staged |
+- TCN-GRU correlation: ~0.87 (strong diversity). TCN-Attn: ~0.81-0.85 (even more diverse)
+- Inference: 70us/step numpy (TCNFast), ~101s per model on 1.44M steps
+
+### Ready-to-Submit Zips
+| Zip | Models | Val | p10 | Est LB | Est Time | Status |
+|-----|--------|-----|-----|--------|----------|--------|
+| **champion_tcn_5g2a2t_v2.zip** | 5G+2A+2T | **0.2808** | **0.2687** | ~0.2718 | ~3303s | **READY** |
+| champion_tcn_5g2a1t.zip | 5G+2A+1T | 0.2806 | — | ~0.2716 | ~3200s | backup |
+
 ### Not Cached (need inference before use in val)
 - attn_comb_s44, attn_comb_s45, attn_comb_s46, attn_pear_s42, attn_pear_s43
 - gru_p1_s{42-44,48,49}, gru_tw2_s{47,49,52}
@@ -205,18 +246,21 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 
 **Quantization KILLED**: Dynamic quantization makes inference 2-2.5x SLOWER for batch=1 hidden=144 models. Overhead dominates at this scale. Benchmarked on both GRU and Attention models.
 
-| P | Approach | Expected LB Gain | Risk | Effort |
-|---|----------|-----------------|------|--------|
-| P1 | **Expand GRU seeds** (13→30, re-rank top-5) | +0.003 to +0.006 | Low | 1 day Kaggle |
-| P1 | **4G+3A ensemble** (swap weakest GRU for 3rd attn) | +0.002 to +0.004 | Medium (timeout) | 0.5 day |
-| KILLED | **Recency-weighted loss** — both seeds negative (0.2570, 0.2633 vs 0.2613 mean) | — | — | — |
-| P3 | **Microstructure features** (1-seed kill test ONLY) | -0.002 to +0.003 | High (0/2 record) | 0.5 day |
-| KILLED | Dynamic quantization, ONNX, JIT, torch.compile, FP16 | — | — | — |
+| P | Approach | Expected LB Gain | Risk | Effort | Status |
+|---|----------|-----------------|------|--------|--------|
+| DONE | **Expand GRU seeds** (13→81, re-rank top-5) | +0.003 to +0.006 | Low | 1 day | top-5 of 81 OVERFITS (-0.0139 gap) |
+| DONE | **TCN as 3rd architecture** (5 seeds, numpy inference) | +0.003 to +0.006 | Medium | 3 days | val +0.0038, awaiting LB result |
+| KILLED | **4G+3A ensemble** — no meaningful val improvement | — | — | — | — |
+| KILLED | **Recency-weighted loss** — both seeds negative | — | — | — | — |
+| KILLED | **Microstructure features** — 5-seed confirmation FAILED | — | — | — | — |
+| KILLED | Dynamic quantization, ONNX, JIT, torch.compile, FP16 | — | — | — | — |
 
-### Go/No-Go Gates (Codex-agreed)
-- **4G+3A**: Must fit within ~3400s estimated time. Only submit if val improvement justifies timeout risk (19% margin vs 30% preferred).
+### Go/No-Go Gates (Codex-agreed) — ALL RESOLVED
+- **4G+3A**: KILLED — no meaningful val improvement over 5G+2A.
 - **Recency-weighted**: KILLED — both seeds (42: 0.2570, 43: 0.2633) underperformed baseline mean (0.2613).
-- **Microstructure**: Must show val improvement in 1-seed test. Kill immediately if negative. Cannot extend beyond Friday.
+- **Microstructure**: KILLED — 5-seed confirmation failed (mean delta +0.0009, needed +0.003).
+- **TCN 3rd architecture**: APPROVED — val +0.0038, strong diversity (corr 0.87 with GRU). Awaiting LB result.
+- **Variant B (cherry-picked GRUs)**: KILLED — gap -0.0139, confirmed top-K from large pool overfits.
 
 ### Execution Plan
 
@@ -229,19 +273,45 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 - Built 3 submission variants (A/B/C), best val 0.2801 (+0.003 over champion) ✓
 - Recency-weighted loss → KILLED (both seeds negative) ✓
 
-**Tue (Feb 11): Submit Best Variants**
-- Submit Variant B (2tw2+3p1) → pending
-- Submit Variant C (3tw2+2p1) if B looks good → pending
-- Microstructure kill test (if time allows)
+**Tue (Feb 11): Variant B + Correlation-Aware + Micro Kill Test**
+- Variant B submitted → 0.2662 OVERFIT (gap -0.0139, same as exhaustive) ✓
+- Correlation-aware greedy selection → zero effect (lambda sweep found no improvement) ✓
+- Microstructure 1-seed kill test → PASS (+0.0065) but inconclusive ✓
 
-**Wed-Fri (Feb 12-14): Next Priorities**
-- Correlation-aware ensemble selection (Codex-agreed P2)
-- Microstructure 1-seed kill test
-- Review all results, iterate on ensemble
+**Wed (Feb 12): Micro Confirmation + TCN Integration**
+- Microstructure 5-seed confirmation → FAILED (mean +0.0009, 3/5 positive). KILLED. ✓
+- TCN kill test (5 seeds s42-46) → ALL VIABLE. Mean 0.2650, best s45 (0.2688). ✓
+- TCN cached (batch inference via model.forward()), diversity confirmed (corr 0.87 with GRU) ✓
+- 5G+2A+2T ensemble: val 0.2808 (+0.0038 over champion). Built champion_tcn_5g2a2t.zip ✓
+- Submitted champion_tcn_5g2a2t.zip → TIMED OUT (PyTorch TCN forward_step too slow) ✓
 
-**Sat-Sun (Feb 15-16): Consolidate + Final Submissions**
-- Build final ensemble archetypes
+**Thu (Feb 13): TCNFast Optimization**
+- Built TCNFast class (pure numpy inference) → 26.5x faster (70us vs 1859us per step) ✓
+- Rebuilt as champion_tcn_5g2a2t_v2.zip with TCNFast ✓
+- Verified correctness (max diff 4.77e-07 vs PyTorch) and timing (est ~3303s total) ✓
+- **READY TO SUBMIT**: champion_tcn_5g2a2t_v2.zip (val 0.2808, est LB ~0.2718)
+- Also built champion_tcn_5g2a1t.zip (5G+2A+1T backup, val 0.2806)
+
+**Fri (Feb 14): Submit v2 + Evaluate**
+- Submit champion_tcn_5g2a2t_v2.zip (5G+2A+2T with numpy TCN)
+- If LB improves over champion: try TCN weight variants
+- If timeout again: submit champion_tcn_5g2a1t.zip (5G+2A+1T, fewer TCN)
+
+**Sat-Sun (Feb 15-16): Final Submissions**
+- Build final ensemble archetypes based on all LB data
 - Submit ranked ladder
+
+### IMMEDIATE NEXT STEPS (for next chat session)
+1. **Submit champion_tcn_5g2a2t_v2.zip** to Wunderfund platform (NOT Kaggle — this is a Wunderfund competition!)
+   - File: `submissions/champion_tcn_5g2a2t_v2.zip` (7.4MB, verified)
+   - Models: 5 GRU (champion) + 2 Attention + 2 TCN (numpy inference via TCNFast)
+   - Val: 0.2808, est LB: ~0.2718, est timing: ~3303s
+2. **If v2 times out**: Submit `submissions/champion_tcn_5g2a1t.zip` (5G+2A+1T backup, fewer TCN)
+3. **If v2 succeeds**: Record LB score, compare to champion (0.2675), try TCN weight variants
+4. **Decision tree after LB result**:
+   - TCN helps (+0.005+): Train more TCN seeds, try higher TCN weight
+   - TCN neutral (±0.003): Keep current, focus on other improvements
+   - TCN hurts (-0.005+): Drop TCN, revert to 5G+2A champion
 
 ### Submission Strategy Rules
 1. **One hypothesis per submission** (no multi-change confounding)
@@ -260,8 +330,8 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | gru_attention_clean_v1.yaml | GRU+Attn | combined | Best attention model |
 | gru_pearson_v1.yaml | GRU | pearson_combined | Metric-aligned loss |
 | gru_recency_v1.yaml | GRU | combined+recency | KILLED — both seeds negative |
-| gru_microstructure_v1.yaml | GRU | combined | +6 microstructure features (untested) |
-| tcn_base_v1.yaml | TCN | combined | Causal TCN (untested) |
+| gru_microstructure_v1.yaml | GRU | combined | +6 microstructure features — KILLED (5-seed confirmation failed) |
+| tcn_base_v1.yaml | TCN | combined | Causal TCN, 9K params, 5 seeds trained (s42-46) |
 
 ### Core Scripts (scripts/)
 | Script | Purpose |
@@ -271,11 +341,12 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | build_mixed_ensemble.py | Combine checkpoints using presets |
 | validate_ensemble_local.py | Cache predictions, greedy/exhaustive search, diversity analysis |
 | evaluate.py | Local evaluation on valid set |
+| test_tcn_fast.py | Benchmark TCNFast (numpy) vs PyTorch speed + correctness |
 
 ### Source Code (src/)
 - `src/models/gru_baseline.py` — GRU with input projection + LayerNorm + output MLP
 - `src/models/gru_attention.py` — GRU + multi-head causal attention
-- `src/models/tcn_model.py` — Causal TCN with depthwise separable convs (untested)
+- `src/models/tcn_model.py` — Causal TCN with depthwise separable convs (tested, 5 seeds viable)
 - `src/training/trainer.py` — Training loop with AMP, grad clip, early stopping
 - `src/training/losses.py` — MSE, Combined, Huber, WeightedPearson, PearsonCombined
 - `src/data/preprocessing.py` — DerivedFeatures, TemporalBuffer, InteractionBuilder, MicrostructureBuffer
@@ -291,6 +362,7 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | 08_attn_gpu_inference.ipynb | Complete — GPU batch inference for attention caching |
 | 09_gru_seed_expansion_v2.ipynb | Complete — tw2 seeds 54-73 (Kaggle) |
 | 09_colab_p1_seeds.ipynb | Complete — p1 seeds 51-90 (Colab) |
+| 10_colab_microstructure.ipynb | Complete — micro 5-seed confirmation (KILLED) |
 
 ---
 
@@ -300,5 +372,15 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 - Kaggle sessions don't persist → train + export + download in single session
 - `.gitignore` excludes: *.pt, *.npz, *.zip, logs/slim/, submissions/
 - export_ensemble.py generates optimized solution.py (feature cache + need_pred skip)
-- validate_ensemble_local.py has 96 registered models (28 cached) for ensemble scoring
+- validate_ensemble_local.py has 96+ registered models (33 cached: 18 GRU + 10 Attn + 5 TCN)
 - Staging dir `logs/_staging/` has extracted checkpoints for submission building
+
+### TCN & TCNFast (added Feb 13)
+- **TCN architecture**: Causal dilated depthwise-separable Conv1d, 6 blocks, ~9K params
+- **TCN forward_step (PyTorch)**: Ring buffer approach, ~1859us/step — TOO SLOW for scoring server
+- **TCNFast (numpy)**: Extracts weights to numpy arrays, does all inference in numpy — 70us/step (26.5x faster)
+- **TCNFast is auto-created**: In solution.py, after PyTorch model loads weights, it gets replaced by `TCNFast(pt_model)` automatically
+- **Correctness verified**: Max abs diff vs PyTorch = 4.77e-07 (float32 precision)
+- **export_ensemble.py** now includes TCNFast class and auto-conversion in PredictionModel.__init__
+- **validate_ensemble_local.py** uses batch `model.forward()` for TCN (17s per model vs 5600s step-by-step)
+- **scripts/test_tcn_fast.py**: Benchmark script comparing PyTorch vs numpy TCN speed + correctness

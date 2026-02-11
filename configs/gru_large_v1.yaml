@@ -1,0 +1,44 @@
+# GRU Large v1 (h=256, improved training recipe)
+# Hypothesis: 3x capacity + cosine warmup + EMA can close gap to top-100.
+# Kill test: 2 seeds, need mean val > 0.270 (vs current GRU mean 0.262-0.263)
+
+model:
+  type: gru
+  input_size: 42
+  hidden_size: 256
+  num_layers: 2
+  dropout: 0.16
+  output_size: 2
+
+training:
+  lr: 0.00065
+  weight_decay: 1e-4
+  epochs: 60
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 12
+  loss: pearson_combined
+  pearson_alpha: 0.6
+  weighted_ratio: 0.62
+  pearson_eps: 1e-6
+  use_amp: true
+  ema: true
+  ema_decay: 0.9992
+  scheduler:
+    type: cosine_warmup
+    warmup_fraction: 0.10
+    min_lr: 2e-5
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: true
+  derived_features: true
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5

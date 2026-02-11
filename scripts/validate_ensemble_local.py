@@ -69,12 +69,14 @@ ZIPS = {
     "gru_expansion_v2": DOWNLOADS / "gru_expansion_v2.zip",
     "gru_expansion_v3": DOWNLOADS / "gru_expansion_v2 (1).zip",
     "p1_expansion": DOWNLOADS / "p1_expansion.zip",
+    "tcn_seeds": DOWNLOADS / "tcn_seeds.zip",
+    "tcn_expansion": DOWNLOADS / "tcn_expansion.zip",
 }
 
 # ---------------------------------------------------------------------------
 # Model registry
 # Each entry: {zip, ckpt_file, norm_file, config, type, val_score}
-# type is "gru" or "gru_attention"
+# type is "gru", "gru_attention", or "tcn"
 # val_score is from notebook 06 or training logs (None if unknown)
 # ---------------------------------------------------------------------------
 MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {}
@@ -182,6 +184,31 @@ for seed in range(51, 91):
          f"normalizer_gru_pearson_v1_seed{seed}.npz",
          "gru_pearson_v1", val=_p1_vals.get(seed))
 
+# --- From tcn_seeds.zip (notebook 11, TCN base seeds 42-46) ---
+_tcn_vals = {42: 0.2650, 43: 0.2622, 44: 0.2629, 45: 0.2688, 46: 0.2660}
+for seed in range(42, 47):
+    _reg(f"tcn_s{seed}", "tcn_seeds",
+         f"tcn_base_v1_seed{seed}.pt",
+         f"normalizer_tcn_base_v1_seed{seed}.npz",
+         "tcn_base_v1", "tcn", val=_tcn_vals.get(seed))
+
+# --- From tcn_expansion.zip (notebook 12, TCN base seeds 47-54) ---
+_tcn_base_ext_vals = {47: 0.2595, 48: 0.2673, 49: 0.2663, 50: 0.2626,
+                      51: 0.2643, 52: 0.2622, 53: 0.2615, 54: 0.2658}
+for seed in range(47, 55):
+    _reg(f"tcn_s{seed}", "tcn_expansion",
+         f"tcn_base_v1_seed{seed}.pt",
+         f"normalizer_tcn_base_v1_seed{seed}.npz",
+         "tcn_base_v1", "tcn", val=_tcn_base_ext_vals.get(seed))
+
+# --- From tcn_expansion.zip (notebook 12, TCN k5 seeds 42-46) ---
+_tcn_k5_vals = {42: 0.2743, 43: 0.2635, 44: 0.2676, 45: 0.2586, 46: 0.2612}
+for seed in range(42, 47):
+    _reg(f"tcn_k5_s{seed}", "tcn_expansion",
+         f"tcn_k5_v1_seed{seed}.pt",
+         f"normalizer_tcn_k5_v1_seed{seed}.npz",
+         "tcn_k5_v1", "tcn", val=_tcn_k5_vals.get(seed))
+
 # ---------------------------------------------------------------------------
 # Named ensembles (presets)
 # ---------------------------------------------------------------------------
@@ -259,6 +286,7 @@ MODEL_GROUPS = {
     "attn_all": [k for k in MODEL_REGISTRY if k.startswith("attn_")],
     "attn_comb": [k for k in MODEL_REGISTRY if k.startswith("attn_comb_")],
     "attn_pear": [k for k in MODEL_REGISTRY if k.startswith("attn_pear_")],
+    "tcn_all": [k for k in MODEL_REGISTRY if k.startswith("tcn_")],
 }
 
 
@@ -268,7 +296,8 @@ MODEL_GROUPS = {
 
 from src.models.gru_attention import GRUAttentionModel
 from src.models.gru_baseline import GRUBaseline
-from src.data.preprocessing import DerivedFeatureBuilder, Normalizer
+from src.models.tcn_model import TCNModel
+from src.data.preprocessing import DerivedFeatureBuilder, MicrostructureBuffer, Normalizer
 
 
 class OnlineModelRunner:
@@ -287,6 +316,8 @@ class OnlineModelRunner:
         model_type = self.config.get("model", {}).get("type", "gru")
         if model_type == "gru_attention":
             self.model = GRUAttentionModel(self.config)
+        elif model_type == "tcn":
+            self.model = TCNModel(self.config)
         else:
             self.model = GRUBaseline(self.config)
 
@@ -349,6 +380,58 @@ class OnlineModelRunner:
         return (
             np.array(predictions),
             np.array(targets, dtype=np.float64),
+            np.array(seq_indices),
+        )
+
+    def run_batch(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Batch inference by sequence — much faster for TCN/models with forward().
+
+        Processes each sequence as a full tensor through model.forward() instead of
+        step-by-step. Produces identical results for causal models (TCN, GRU).
+        """
+        predictions = []
+        targets = []
+        seq_indices = []
+
+        unique_seqs = df['seq_ix'].unique()
+        n_seqs = len(unique_seqs)
+        t_start = time.time()
+
+        for i, seq_ix in enumerate(unique_seqs):
+            seq_df = df[df['seq_ix'] == seq_ix]
+            need_pred_mask = seq_df['need_prediction'].values.astype(bool)
+            lob_data = seq_df.values[:, 3:35].astype(np.float32)
+            labels = seq_df.values[:, 35:]
+
+            # Build features for full sequence
+            if self.derived_features:
+                derived = DerivedFeatureBuilder.compute(lob_data)
+                features = np.concatenate([lob_data, derived], axis=-1)
+            else:
+                features = lob_data
+
+            features = self.normalizer.transform(features)
+            x = torch.from_numpy(features).unsqueeze(0).to(self.device)  # (1, seq_len, features)
+
+            with torch.no_grad():
+                preds_seq, _ = self.model(x, None)
+                preds_seq = preds_seq.squeeze(0).cpu().numpy()  # (seq_len, 2)
+
+            preds_seq = np.clip(preds_seq, -6, 6)
+
+            # Filter to need_prediction rows
+            predictions.append(preds_seq[need_pred_mask])
+            targets.append(labels[need_pred_mask])
+            seq_indices.extend([int(seq_ix)] * need_pred_mask.sum())
+
+            if (i + 1) % 200 == 0:
+                elapsed = time.time() - t_start
+                pct = 100.0 * (i + 1) / n_seqs
+                print(f"    {pct:.0f}% ({i+1}/{n_seqs} seqs) in {elapsed:.0f}s")
+
+        return (
+            np.concatenate(predictions, axis=0),
+            np.concatenate(targets, axis=0).astype(np.float64),
             np.array(seq_indices),
         )
 
@@ -487,7 +570,11 @@ def run_inference(model_names: List[str], data_path: Path, force: bool = False):
                 checkpoint_path=str(tmpdir / spec["ckpt"]),
                 normalizer_path=str(tmpdir / spec["norm"]),
             )
-            preds, targets, seq_ix = runner.run(df)
+            # Use batch inference for TCN (much faster than step-by-step)
+            if spec["type"] == "tcn":
+                preds, targets, seq_ix = runner.run_batch(df)
+            else:
+                preds, targets, seq_ix = runner.run(df)
             elapsed = time.time() - t0
 
             # Individual model score
