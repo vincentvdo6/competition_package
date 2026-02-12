@@ -36,15 +36,20 @@ class GRUBaseline(BaseModel):
         self.num_layers = model_cfg.get('num_layers', 2)
         self.dropout = model_cfg.get('dropout', 0.2)
         self.output_size = model_cfg.get('output_size', 2)
-        
-        # Input projection
-        self.input_proj = nn.Linear(self.input_size, self.hidden_size)
-        self.input_norm = nn.LayerNorm(self.hidden_size)
-        self.input_dropout = nn.Dropout(self.dropout)
-        
+        self.vanilla = model_cfg.get('vanilla', False)
+
+        # Input projection (skipped in vanilla mode — raw features go directly to GRU)
+        if not self.vanilla:
+            self.input_proj = nn.Linear(self.input_size, self.hidden_size)
+            self.input_norm = nn.LayerNorm(self.hidden_size)
+            self.input_dropout = nn.Dropout(self.dropout)
+            gru_input_size = self.hidden_size
+        else:
+            gru_input_size = self.input_size
+
         # GRU layers
         self.gru = nn.GRU(
-            input_size=self.hidden_size,
+            input_size=gru_input_size,
             hidden_size=self.hidden_size,
             num_layers=self.num_layers,
             batch_first=True,
@@ -120,9 +125,10 @@ class GRUBaseline(BaseModel):
             hidden = self.init_hidden(batch_size)
             hidden = hidden.to(x.device)
 
-        x = self.input_proj(x)
-        x = self.input_norm(x)
-        x = self.input_dropout(x)
+        if not self.vanilla:
+            x = self.input_proj(x)
+            x = self.input_norm(x)
+            x = self.input_dropout(x)
 
         gru_out, new_hidden = self.gru(x, hidden)
 

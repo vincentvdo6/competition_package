@@ -252,6 +252,7 @@ def _prepare_model_specs(
             "attention_dropout": float(model_cfg.get("attention_dropout", 0.1)),
             "attention_window": int(model_cfg.get("attention_window", 128)),
             "output_type": model_cfg.get("output_type", "mlp"),
+            "vanilla": bool(model_cfg.get("vanilla", False)),
             # TCN-specific
             "hidden_channels": int(model_cfg.get("hidden_channels", 32)),
             "kernel_size": int(model_cfg.get("kernel_size", 3)),
@@ -441,16 +442,21 @@ class GRUModel(nn.Module):
         self.hidden_size = int(cfg.get('hidden_size', 128))
         self.num_layers = int(cfg.get('num_layers', 2))
         self.dropout = float(cfg.get('dropout', 0.2))
+        self.vanilla = bool(cfg.get('vanilla', False))
 
         input_size = int(cfg.get('input_size', 32))
         output_size = int(cfg.get('output_size', 2))
 
-        self.input_proj = nn.Linear(input_size, self.hidden_size)
-        self.input_norm = nn.LayerNorm(self.hidden_size)
-        self.input_dropout = nn.Dropout(self.dropout)
+        if not self.vanilla:
+            self.input_proj = nn.Linear(input_size, self.hidden_size)
+            self.input_norm = nn.LayerNorm(self.hidden_size)
+            self.input_dropout = nn.Dropout(self.dropout)
+            gru_input_size = self.hidden_size
+        else:
+            gru_input_size = input_size
 
         self.gru = nn.GRU(
-            input_size=self.hidden_size,
+            input_size=gru_input_size,
             hidden_size=self.hidden_size,
             num_layers=self.num_layers,
             batch_first=True,
@@ -477,9 +483,10 @@ class GRUModel(nn.Module):
         if hidden is None:
             hidden = torch.zeros(self.num_layers, x.size(0), self.hidden_size, device=x.device)
 
-        x = self.input_proj(x)
-        x = self.input_norm(x)
-        x = self.input_dropout(x)
+        if not self.vanilla:
+            x = self.input_proj(x)
+            x = self.input_norm(x)
+            x = self.input_dropout(x)
 
         out, hidden = self.gru(x, hidden)
         if not need_pred:
