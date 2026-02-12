@@ -205,6 +205,15 @@ class Trainer:
             print(f"SWA: enabled from epoch {self.swa_start_epoch}, lr={self.swa_lr}",
                   flush=True)
 
+        # Truncated BPTT (windowed training)
+        tbptt_cfg = train_cfg.get('tbptt', {})
+        self.tbptt_enabled = bool(tbptt_cfg.get('enabled', False))
+        self.tbptt_len = int(tbptt_cfg.get('length', 100))
+        self.tbptt_random_offset = bool(tbptt_cfg.get('random_offset', True))
+        if self.tbptt_enabled:
+            print(f"TBPTT: length={self.tbptt_len}, random_offset={self.tbptt_random_offset}",
+                  flush=True)
+
         # Early stopping state
         self.best_score = -float('inf')
         self.epochs_without_improvement = 0
@@ -234,41 +243,80 @@ class Trainer:
                 )
                 features = features * scale
 
-            self.optimizer.zero_grad(set_to_none=True)
+            if self.tbptt_enabled:
+                # Truncated BPTT: process sequence in chunks
+                seq_len = features.shape[1]
+                offset = torch.randint(0, self.tbptt_len, (1,)).item() if self.tbptt_random_offset else 0
+                hidden = None
+                chunk_loss_sum = 0.0
+                n_chunks = 0
 
-            with autocast('cuda', enabled=self.use_amp):
-                if self.use_aux:
-                    predictions, _, aux = self.model(features, return_aux=True)
-                    loss = self.loss_fn(predictions, targets, mask,
-                                        temporal_weights=self.temporal_weights,
-                                        aux_predictions=aux)
-                else:
-                    predictions, _ = self.model(features)
-                    if self.temporal_weights is not None:
+                for t_start in range(offset, seq_len, self.tbptt_len):
+                    t_end = min(t_start + self.tbptt_len, seq_len)
+                    feat_chunk = features[:, t_start:t_end]
+                    tgt_chunk = targets[:, t_start:t_end]
+                    mask_chunk = mask[:, t_start:t_end]
+
+                    if hidden is not None:
+                        hidden = hidden.detach()
+
+                    self.optimizer.zero_grad(set_to_none=True)
+
+                    with autocast('cuda', enabled=self.use_amp):
+                        pred_chunk, hidden = self.model(feat_chunk, hidden)
+                        loss = self.loss_fn(pred_chunk, tgt_chunk, mask_chunk)
+
+                    self.scaler.scale(loss).backward()
+
+                    if self.gradient_clip > 0:
+                        self.scaler.unscale_(self.optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip)
+
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                    chunk_loss_sum += loss.item()
+                    n_chunks += 1
+
+                if self.ema is not None:
+                    self.ema.update(self.model)
+
+                total_loss += chunk_loss_sum / max(n_chunks, 1)
+            else:
+                self.optimizer.zero_grad(set_to_none=True)
+
+                with autocast('cuda', enabled=self.use_amp):
+                    if self.use_aux:
+                        predictions, _, aux = self.model(features, return_aux=True)
                         loss = self.loss_fn(predictions, targets, mask,
-                                            temporal_weights=self.temporal_weights)
+                                            temporal_weights=self.temporal_weights,
+                                            aux_predictions=aux)
                     else:
-                        loss = self.loss_fn(predictions, targets, mask)
+                        predictions, _ = self.model(features)
+                        if self.temporal_weights is not None:
+                            loss = self.loss_fn(predictions, targets, mask,
+                                                temporal_weights=self.temporal_weights)
+                        else:
+                            loss = self.loss_fn(predictions, targets, mask)
 
-            self.scaler.scale(loss).backward()
+                self.scaler.scale(loss).backward()
 
-            if self.gradient_clip > 0:
-                self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(),
-                    self.gradient_clip
-                )
+                if self.gradient_clip > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(),
+                        self.gradient_clip
+                    )
 
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
 
-            if self.ema is not None:
-                self.ema.update(self.model)
+                if self.ema is not None:
+                    self.ema.update(self.model)
 
-            if self.sched_type == 'one_cycle':
-                self.scheduler.step()
+                if self.sched_type == 'one_cycle':
+                    self.scheduler.step()
 
-            total_loss += loss.item()
+                total_loss += loss.item()
             if self.use_tqdm:
                 batch_iter.set_postfix({'loss': f'{loss.item():.4f}'})
             elif (
