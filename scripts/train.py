@@ -120,6 +120,10 @@ def main():
         f"interaction={interaction_features}, microstructure={microstructure_features} "
         f"-> input_size={feature_dim}"
     )
+    window_size = int(data_cfg.get('window_size', 0))
+    if window_size > 0:
+        print(f"Windowed training: random {window_size}-step crops (zero hidden state)")
+
     train_loader, valid_loader, normalizer = create_dataloaders(
         train_path=train_path,
         valid_path=valid_path,
@@ -130,6 +134,7 @@ def main():
         temporal_features=temporal_features,
         interaction_features=interaction_features,
         microstructure_features=microstructure_features,
+        window_size=window_size,
     )
     print(f"Train batches: {len(train_loader)}, Valid batches: {len(valid_loader)}")
 

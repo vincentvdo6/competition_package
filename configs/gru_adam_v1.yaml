@@ -1,0 +1,42 @@
+# Round 4 Exp 3: Adam optimizer (no weight decay)
+# Change from baseline_match_v1: optimizer=adam, weight_decay=0
+
+model:
+  type: gru
+  input_size: 32
+  hidden_size: 64
+  num_layers: 3
+  dropout: 0.2
+  output_size: 2
+  output_type: linear
+
+training:
+  optimizer: adam
+  lr: 0.001
+  weight_decay: 0
+  epochs: 50
+  batch_size: 256
+  gradient_clip: 1.0
+  early_stopping_patience: 10
+  loss: combined
+  weighted_ratio: 0.62
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 4
+    min_lr: 1e-6
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: true
+  derived_features: false
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5

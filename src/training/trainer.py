@@ -7,7 +7,7 @@ Supports both CPU and GPU (CUDA/ROCm):
 
 import torch
 import torch.nn as nn
-from torch.optim import AdamW
+from torch.optim import Adam, AdamW
 from torch.optim.lr_scheduler import OneCycleLR, ReduceLROnPlateau, LambdaLR
 from torch.optim.swa_utils import AveragedModel, SWALR, update_bn
 from torch.utils.data import DataLoader
@@ -108,11 +108,13 @@ class Trainer:
         self.use_tqdm = bool(train_cfg.get('use_tqdm', True)) and sys.stdout.isatty()
 
         # Optimizer
-        self.optimizer = AdamW(
-            model.parameters(),
-            lr=float(train_cfg.get('lr', 0.001)),
-            weight_decay=float(train_cfg.get('weight_decay', 1e-5))
-        )
+        opt_type = train_cfg.get('optimizer', 'adamw').lower()
+        opt_lr = float(train_cfg.get('lr', 0.001))
+        opt_wd = float(train_cfg.get('weight_decay', 1e-5))
+        if opt_type == 'adam':
+            self.optimizer = Adam(model.parameters(), lr=opt_lr, weight_decay=opt_wd)
+        else:
+            self.optimizer = AdamW(model.parameters(), lr=opt_lr, weight_decay=opt_wd)
 
         # Learning rate scheduler
         sched_cfg = train_cfg.get('scheduler', {})

@@ -122,6 +122,34 @@ class LOBSequenceDataset(Dataset):
         return self.seq_ids[idx]
 
 
+class WindowedDataset(Dataset):
+    """Returns random fixed-length windows from full sequences.
+
+    Matches the official baseline's training/inference mode:
+    each sample is a W-step crop with zero initial hidden state.
+    """
+
+    def __init__(self, base_dataset: LOBSequenceDataset, window_size: int = 100):
+        self.features = base_dataset.features  # (N, 1000, F)
+        self.targets = base_dataset.targets    # (N, 1000, 2)
+        self.masks = base_dataset.masks        # (N, 1000)
+        self.window_size = window_size
+        self.n_seqs = len(base_dataset)
+        self.max_start = 1000 - window_size
+
+    def __len__(self) -> int:
+        return self.n_seqs
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        start = torch.randint(0, self.max_start + 1, (1,)).item()
+        end = start + self.window_size
+        return (
+            self.features[idx, start:end],
+            self.targets[idx, start:end],
+            self.masks[idx, start:end],
+        )
+
+
 def create_dataloaders(
     train_path: str,
     valid_path: str,
@@ -133,12 +161,13 @@ def create_dataloaders(
     temporal_features: bool = False,
     interaction_features: bool = False,
     microstructure_features: bool = False,
+    window_size: int = 0,
 ) -> Tuple[DataLoader, DataLoader, Optional[Normalizer]]:
     """Create train and validation dataloaders with shared normalizer.
 
-    Since all data is pre-loaded as tensors, num_workers=0 is optimal
-    (avoids multiprocessing serialization overhead for simple index ops).
-    Set pin_memory=True when using GPU for faster CPU->GPU transfers.
+    Args:
+        window_size: If >0, wrap train dataset in WindowedDataset (random crops).
+                     Validation always uses full sequences for fair comparison.
     """
     train_dataset = LOBSequenceDataset(
         train_path, normalize=normalize, derived_features=derived_features,
@@ -157,8 +186,13 @@ def create_dataloaders(
         microstructure_features=microstructure_features,
     )
 
+    # Wrap train in windowed sampling if requested
+    effective_train = train_dataset
+    if window_size > 0:
+        effective_train = WindowedDataset(train_dataset, window_size=window_size)
+
     train_loader = DataLoader(
-        train_dataset,
+        effective_train,
         batch_size=batch_size,
         shuffle=True,
         num_workers=0,
