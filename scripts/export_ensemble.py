@@ -251,6 +251,7 @@ def _prepare_model_specs(
             "attention_heads": int(model_cfg.get("attention_heads", 4)),
             "attention_dropout": float(model_cfg.get("attention_dropout", 0.1)),
             "attention_window": int(model_cfg.get("attention_window", 128)),
+            "output_type": model_cfg.get("output_type", "mlp"),
             # TCN-specific
             "hidden_channels": int(model_cfg.get("hidden_channels", 32)),
             "kernel_size": int(model_cfg.get("kernel_size", 3)),
@@ -457,12 +458,16 @@ class GRUModel(nn.Module):
             bidirectional=False,
         )
 
-        self.output_proj = nn.Sequential(
-            nn.Linear(self.hidden_size, self.hidden_size // 2),
-            nn.ReLU(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.hidden_size // 2, output_size),
-        )
+        output_type = cfg.get('output_type', 'mlp')
+        if output_type == 'linear':
+            self.output_proj = nn.Linear(self.hidden_size, output_size)
+        else:
+            self.output_proj = nn.Sequential(
+                nn.Linear(self.hidden_size, self.hidden_size // 2),
+                nn.ReLU(),
+                nn.Dropout(self.dropout),
+                nn.Linear(self.hidden_size // 2, output_size),
+            )
 
     def forward_step(self, x, hidden=None, need_pred=True):
         if x.dim() == 1:

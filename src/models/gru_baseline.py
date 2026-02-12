@@ -53,12 +53,16 @@ class GRUBaseline(BaseModel):
         )
         
         # Output projection
-        self.output_proj = nn.Sequential(
-            nn.Linear(self.hidden_size, self.hidden_size // 2),
-            nn.ReLU(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.hidden_size // 2, self.output_size)
-        )
+        output_type = model_cfg.get('output_type', 'mlp')
+        if output_type == 'linear':
+            self.output_proj = nn.Linear(self.hidden_size, self.output_size)
+        else:
+            self.output_proj = nn.Sequential(
+                nn.Linear(self.hidden_size, self.hidden_size // 2),
+                nn.ReLU(),
+                nn.Dropout(self.dropout),
+                nn.Linear(self.hidden_size // 2, self.output_size)
+            )
 
         # Optional auxiliary heads (train-only, stripped at inference)
         self.has_aux_heads = model_cfg.get('aux_heads', False)
@@ -66,7 +70,30 @@ class GRUBaseline(BaseModel):
             self.aux_delta = nn.Linear(self.hidden_size, 1)
             self.aux_sign_t0 = nn.Linear(self.hidden_size, 1)
             self.aux_sign_t1 = nn.Linear(self.hidden_size, 1)
+
+        # Chrono initialization for GRU gates (biases update gate toward persistence)
+        if model_cfg.get('chrono_init', False):
+            max_period = model_cfg.get('chrono_max_period', 100)
+            self._apply_chrono_init(max_period)
     
+    def _apply_chrono_init(self, max_period: int = 100):
+        """Chrono initialization: bias GRU update gate toward persistence.
+
+        Sets update gate (z) bias to log(U(1, max_period)), making z_t
+        default to high values so h_t ≈ h_{t-1} (long-term memory).
+        PyTorch GRU gate order: [reset, update, new], each of size hidden_size.
+        """
+        import math
+        for layer_idx in range(self.num_layers):
+            # bias_ih and bias_hh both have shape (3 * hidden_size,)
+            for bias_name in [f'bias_ih_l{layer_idx}', f'bias_hh_l{layer_idx}']:
+                bias = getattr(self.gru, bias_name)
+                h = self.hidden_size
+                # Update gate bias at index [h:2h]
+                with torch.no_grad():
+                    # log(U(1, max_period)) gives values in [0, log(max_period)]
+                    bias[h:2*h].uniform_(1, max_period).log_()
+
     def forward(
         self,
         x: torch.Tensor,

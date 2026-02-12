@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import OneCycleLR, ReduceLROnPlateau, LambdaLR
+from torch.optim.swa_utils import AveragedModel, SWALR, update_bn
 from torch.utils.data import DataLoader
 from torch.amp import autocast, GradScaler
 import numpy as np
@@ -175,6 +176,15 @@ class Trainer:
         self.experiment_log = os.path.join(self.log_dir, 'experiments.jsonl')
         os.makedirs(self.log_dir, exist_ok=True)
 
+        # Data augmentation (variance stretch/compress)
+        aug_cfg = train_cfg.get('augmentation', {})
+        self.use_augmentation = bool(aug_cfg.get('enabled', False))
+        if self.use_augmentation:
+            self.aug_scale_low = float(aug_cfg.get('scale_range', [0.8, 1.2])[0])
+            self.aug_scale_high = float(aug_cfg.get('scale_range', [0.8, 1.2])[1])
+            print(f"Augmentation: scale [{self.aug_scale_low}, {self.aug_scale_high}]",
+                  flush=True)
+
         # Recency weighting: compute temporal weight tensor once
         recency_cfg = train_cfg.get('recency_weighting', {})
         if recency_cfg.get('enabled', False):
@@ -185,6 +195,15 @@ class Trainer:
                   flush=True)
         else:
             self.temporal_weights = None
+
+        # SWA (Stochastic Weight Averaging) — average last N epoch checkpoints
+        swa_cfg = train_cfg.get('swa', {})
+        self.swa_enabled = bool(swa_cfg.get('enabled', False))
+        self.swa_start_epoch = int(swa_cfg.get('start_epoch', self.epochs - 5))
+        self.swa_lr = float(swa_cfg.get('lr', float(train_cfg.get('lr', 0.001)) * 0.1))
+        if self.swa_enabled:
+            print(f"SWA: enabled from epoch {self.swa_start_epoch}, lr={self.swa_lr}",
+                  flush=True)
 
         # Early stopping state
         self.best_score = -float('inf')
@@ -206,6 +225,14 @@ class Trainer:
             features = features.to(self.device, non_blocking=True)
             targets = targets.to(self.device, non_blocking=True)
             mask = mask.to(self.device, non_blocking=True)
+
+            # Data augmentation: per-sequence variance stretch/compress
+            if self.use_augmentation:
+                batch_size = features.shape[0]
+                scale = torch.empty(batch_size, 1, 1, device=self.device).uniform_(
+                    self.aug_scale_low, self.aug_scale_high
+                )
+                features = features * scale
 
             self.optimizer.zero_grad(set_to_none=True)
 
@@ -318,8 +345,22 @@ class Trainer:
 
         total_start = time.time()
 
+        # SWA state
+        swa_model = None
+        swa_scheduler = None
+        swa_active = False
+        swa_n_averaged = 0
+
         for epoch in range(self.epochs):
             epoch_start = time.time()
+
+            # Activate SWA at the designated epoch
+            if self.swa_enabled and epoch == self.swa_start_epoch and not swa_active:
+                swa_model = AveragedModel(self.model, device=self.device)
+                swa_scheduler = SWALR(self.optimizer, swa_lr=self.swa_lr)
+                swa_active = True
+                self.epochs_without_improvement = 0  # reset early stopping
+                print(f"\n>>> SWA activated at epoch {epoch+1}, lr={self.swa_lr}", flush=True)
 
             if hasattr(self.loss_fn, 'set_epoch'):
                 self.loss_fn.set_epoch(epoch)
@@ -339,23 +380,29 @@ class Trainer:
             if ema_backup is not None:
                 self.ema.restore(self.model, ema_backup)
 
-            # Scheduler step
-            if self.sched_type == 'reduce_on_plateau':
+            # SWA: update averaged model and use SWA scheduler
+            if swa_active:
+                swa_model.update_parameters(self.model)
+                swa_scheduler.step()
+                swa_n_averaged += 1
+            elif self.sched_type == 'reduce_on_plateau':
                 self.scheduler.step(avg_score)
             elif self.sched_type == 'cosine_warmup':
                 self.scheduler.step()
+
             current_lr = self.optimizer.param_groups[0]['lr']
             history['learning_rates'].append(current_lr)
 
             epoch_time = time.time() - epoch_start
 
+            swa_tag = " [SWA]" if swa_active else ""
             print(f"Epoch {epoch+1:3d}/{self.epochs} | "
                   f"Loss: {train_loss:.4f} | "
                   f"Val t0: {scores['t0']:.4f} | "
                   f"Val t1: {scores['t1']:.4f} | "
                   f"Val avg: {scores['avg']:.4f} | "
                   f"LR: {current_lr:.2e} | "
-                  f"{epoch_time:.1f}s", flush=True)
+                  f"{epoch_time:.1f}s{swa_tag}", flush=True)
 
             if avg_score > self.best_score:
                 self.best_score = avg_score
@@ -367,7 +414,8 @@ class Trainer:
                 print(f"  -> New best model saved! ({ckpt_name})", flush=True)
             else:
                 self.epochs_without_improvement += 1
-                if self.epochs_without_improvement >= self.patience:
+                # Don't early stop during SWA — let all SWA epochs run
+                if not swa_active and self.epochs_without_improvement >= self.patience:
                     print(
                         f"\nEarly stopping at epoch {epoch+1} "
                         f"(no improvement for {self.patience} epochs)",
@@ -378,6 +426,33 @@ class Trainer:
             # Periodic checkpoint saving (for checkpoint averaging)
             if self.save_every > 0 and (epoch + 1) % self.save_every == 0:
                 self._save_epoch_checkpoint(epoch + 1, use_ema=True)
+
+        # SWA finalization: update BN stats and save SWA model
+        if swa_active and swa_model is not None and swa_n_averaged >= 2:
+            print(f"\nFinalizing SWA (averaged {swa_n_averaged} checkpoints)...", flush=True)
+            # Update batch normalization statistics with SWA model
+            update_bn(self.train_loader, swa_model, device=self.device)
+            # Validate SWA model
+            # Temporarily swap model for validation
+            orig_model = self.model
+            self.model = swa_model.module
+            swa_score, swa_scores = self.validate()
+            self.model = orig_model
+            print(f"SWA val: t0={swa_scores['t0']:.4f} | t1={swa_scores['t1']:.4f} | "
+                  f"avg={swa_scores['avg']:.4f}", flush=True)
+            # Save SWA model if better
+            if swa_score > self.best_score:
+                print(f"SWA improved: {swa_score:.4f} > {self.best_score:.4f}", flush=True)
+                self.best_score = swa_score
+                self.best_epoch = -1  # mark as SWA
+                # Save SWA weights
+                orig_model = self.model
+                self.model = swa_model.module
+                self._save_checkpoint('best_model.pt', use_ema=False)
+                self.model = orig_model
+            else:
+                print(f"SWA not better: {swa_score:.4f} <= {self.best_score:.4f} (keeping best)",
+                      flush=True)
 
         total_time = time.time() - total_start
         print("-" * 60, flush=True)
