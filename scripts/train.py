@@ -18,6 +18,7 @@ from src.models.gru_attention import GRUAttentionModel
 from src.models.gru_baseline import GRUBaseline
 from src.models.lstm_model import LSTMModel
 from src.models.tcn_model import TCNModel
+from src.models.transformer_model import CausalTransformerModel
 from src.training.trainer import Trainer, setup_cpu_performance
 from src.training.losses import get_loss_function
 
@@ -50,6 +51,8 @@ def get_model(config: dict) -> torch.nn.Module:
         return LSTMModel(config)
     elif model_type == 'tcn':
         return TCNModel(config)
+    elif model_type == 'transformer':
+        return CausalTransformerModel(config)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
