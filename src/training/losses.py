@@ -1,6 +1,8 @@
 """Loss function factory for training."""
 
+import torch
 import torch.nn as nn
+from typing import Optional
 from src.evaluation.metrics import (
     WeightedMSELoss,
     CombinedLoss,
@@ -9,6 +11,17 @@ from src.evaluation.metrics import (
     PearsonCombinedLoss,
     PearsonPrimaryLoss,
 )
+
+
+class MaskedMSELoss(nn.Module):
+    """Simple MSE loss that supports the mask argument from the trainer."""
+
+    def forward(self, predictions: torch.Tensor, targets: torch.Tensor,
+                mask: Optional[torch.Tensor] = None, **kwargs) -> torch.Tensor:
+        if mask is not None:
+            mask_3d = mask.unsqueeze(-1).expand_as(predictions)
+            return torch.nn.functional.mse_loss(predictions[mask_3d], targets[mask_3d])
+        return torch.nn.functional.mse_loss(predictions, targets)
 
 
 def get_loss_function(config: dict) -> nn.Module:
@@ -27,7 +40,7 @@ def get_loss_function(config: dict) -> nn.Module:
     target_weights = training_cfg.get('target_weights', None)
 
     if loss_type == 'mse':
-        return nn.MSELoss()
+        return MaskedMSELoss()
     elif loss_type == 'weighted_mse':
         return WeightedMSELoss(target_weights=target_weights)
     elif loss_type == 'combined':
