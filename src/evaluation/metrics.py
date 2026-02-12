@@ -503,3 +503,85 @@ class HuberWeightedLoss(nn.Module):
         loss = (weights * huber).sum() / (weights.sum() + self.eps)
 
         return loss
+
+
+class AuxHeadLoss(nn.Module):
+    """Wraps a base loss with auxiliary head losses (delta, sign_t0, sign_t1).
+
+    Aux heads regularize the shared encoder during training. They are dropped
+    at inference, so there is zero runtime cost.
+
+    Loss = L_main + alpha * (delta_w * L_delta + sign_w * (L_sign0 + L_sign1))
+    where alpha anneals linearly to 0 in the last 20% of epochs.
+    """
+
+    def __init__(
+        self,
+        base_loss: nn.Module,
+        delta_weight: float = 0.2,
+        sign_weight: float = 0.1,
+        total_epochs: int = 35,
+    ):
+        super().__init__()
+        self.base_loss = base_loss
+        self.delta_weight = delta_weight
+        self.sign_weight = sign_weight
+        self.total_epochs = total_epochs
+        self.current_epoch = 0
+        self.mse = nn.MSELoss()
+        self.bce = nn.BCEWithLogitsLoss()
+
+    def set_epoch(self, epoch: int):
+        self.current_epoch = epoch
+        if hasattr(self.base_loss, 'set_epoch'):
+            self.base_loss.set_epoch(epoch)
+
+    @property
+    def aux_alpha(self) -> float:
+        """1.0 for first 80% of epochs, linear decay to 0 in last 20%."""
+        anneal_start = int(0.8 * self.total_epochs)
+        if self.current_epoch < anneal_start:
+            return 1.0
+        progress = (self.current_epoch - anneal_start) / max(1, self.total_epochs - anneal_start)
+        return max(0.0, 1.0 - progress)
+
+    def forward(
+        self,
+        predictions: torch.Tensor,
+        targets: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        temporal_weights: Optional[torch.Tensor] = None,
+        aux_predictions: Optional[dict] = None,
+    ) -> torch.Tensor:
+        main_loss = self.base_loss(predictions, targets, mask, temporal_weights)
+
+        if aux_predictions is None or self.aux_alpha == 0:
+            return main_loss
+
+        # Flatten and mask
+        if mask is not None:
+            mask_flat = mask.reshape(-1)
+            target_flat = targets.reshape(-1, 2)[mask_flat]
+            delta_pred = aux_predictions['delta'].reshape(-1)[mask_flat]
+            sign_t0_pred = aux_predictions['sign_t0'].reshape(-1)[mask_flat]
+            sign_t1_pred = aux_predictions['sign_t1'].reshape(-1)[mask_flat]
+        else:
+            target_flat = targets.reshape(-1, 2)
+            delta_pred = aux_predictions['delta'].reshape(-1)
+            sign_t0_pred = aux_predictions['sign_t0'].reshape(-1)
+            sign_t1_pred = aux_predictions['sign_t1'].reshape(-1)
+
+        # Aux targets
+        delta_target = target_flat[:, 1] - target_flat[:, 0]
+        sign_t0_target = (target_flat[:, 0] > 0).float()
+        sign_t1_target = (target_flat[:, 1] > 0).float()
+
+        # Aux losses
+        l_delta = self.mse(delta_pred, delta_target)
+        l_sign0 = self.bce(sign_t0_pred, sign_t0_target)
+        l_sign1 = self.bce(sign_t1_pred, sign_t1_target)
+
+        alpha = self.aux_alpha
+        aux_loss = self.delta_weight * l_delta + self.sign_weight * (l_sign0 + l_sign1)
+
+        return main_loss + alpha * aux_loss

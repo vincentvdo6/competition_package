@@ -2,7 +2,7 @@
 
 import torch
 import torch.nn as nn
-from typing import Tuple, Optional
+from typing import Dict, Tuple, Optional, Union
 from .base import BaseModel
 
 
@@ -59,41 +59,55 @@ class GRUBaseline(BaseModel):
             nn.Dropout(self.dropout),
             nn.Linear(self.hidden_size // 2, self.output_size)
         )
+
+        # Optional auxiliary heads (train-only, stripped at inference)
+        self.has_aux_heads = model_cfg.get('aux_heads', False)
+        if self.has_aux_heads:
+            self.aux_delta = nn.Linear(self.hidden_size, 1)
+            self.aux_sign_t0 = nn.Linear(self.hidden_size, 1)
+            self.aux_sign_t1 = nn.Linear(self.hidden_size, 1)
     
     def forward(
-        self, 
-        x: torch.Tensor, 
-        hidden: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        self,
+        x: torch.Tensor,
+        hidden: Optional[torch.Tensor] = None,
+        return_aux: bool = False,
+    ) -> Union[Tuple[torch.Tensor, torch.Tensor],
+               Tuple[torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]]:
         """Forward pass for full sequences.
-        
+
         Args:
-            x: Input features of shape (batch, seq_len, 32)
-            hidden: Hidden state of shape (num_layers, batch, hidden_size)
-                   or None to initialize fresh
-        
+            x: Input features of shape (batch, seq_len, input_size)
+            hidden: Hidden state or None to initialize fresh
+            return_aux: If True and model has aux heads, return aux predictions
+
         Returns:
             predictions: Shape (batch, seq_len, 2)
             new_hidden: Shape (num_layers, batch, hidden_size)
+            aux (optional): Dict with 'delta', 'sign_t0', 'sign_t1' predictions
         """
         batch_size, seq_len, _ = x.shape
-        
-        # Initialize hidden if not provided
+
         if hidden is None:
             hidden = self.init_hidden(batch_size)
             hidden = hidden.to(x.device)
-        
-        # Input projection: (batch, seq_len, 32) -> (batch, seq_len, hidden_size)
+
         x = self.input_proj(x)
         x = self.input_norm(x)
         x = self.input_dropout(x)
-        
-        # GRU forward
+
         gru_out, new_hidden = self.gru(x, hidden)
-        
-        # Output projection: (batch, seq_len, hidden_size) -> (batch, seq_len, 2)
+
         predictions = self.output_proj(gru_out)
-        
+
+        if return_aux and self.has_aux_heads:
+            aux = {
+                'delta': self.aux_delta(gru_out),
+                'sign_t0': self.aux_sign_t0(gru_out),
+                'sign_t1': self.aux_sign_t1(gru_out),
+            }
+            return predictions, new_hidden, aux
+
         return predictions, new_hidden
     
     def init_hidden(self, batch_size: int) -> torch.Tensor:

@@ -82,8 +82,21 @@ class Trainer:
         self.config = config
         self.train_loader = train_loader
         self.valid_loader = valid_loader
-        self.loss_fn = loss_fn.to(device)
         self.device = device
+
+        # Wrap loss with AuxHeadLoss if model has aux heads
+        self.use_aux = hasattr(model, 'has_aux_heads') and model.has_aux_heads
+        if self.use_aux:
+            from src.evaluation.metrics import AuxHeadLoss
+            train_cfg_tmp = config.get('training', {})
+            self.loss_fn = AuxHeadLoss(
+                base_loss=loss_fn,
+                delta_weight=float(train_cfg_tmp.get('aux_delta_weight', 0.2)),
+                sign_weight=float(train_cfg_tmp.get('aux_sign_weight', 0.1)),
+                total_epochs=int(train_cfg_tmp.get('epochs', 50)),
+            ).to(device)
+        else:
+            self.loss_fn = loss_fn.to(device)
 
         # Training parameters
         train_cfg = config.get('training', {})
@@ -197,12 +210,18 @@ class Trainer:
             self.optimizer.zero_grad(set_to_none=True)
 
             with autocast('cuda', enabled=self.use_amp):
-                predictions, _ = self.model(features)
-                if self.temporal_weights is not None:
+                if self.use_aux:
+                    predictions, _, aux = self.model(features, return_aux=True)
                     loss = self.loss_fn(predictions, targets, mask,
-                                        temporal_weights=self.temporal_weights)
+                                        temporal_weights=self.temporal_weights,
+                                        aux_predictions=aux)
                 else:
-                    loss = self.loss_fn(predictions, targets, mask)
+                    predictions, _ = self.model(features)
+                    if self.temporal_weights is not None:
+                        loss = self.loss_fn(predictions, targets, mask,
+                                            temporal_weights=self.temporal_weights)
+                    else:
+                        loss = self.loss_fn(predictions, targets, mask)
 
             self.scaler.scale(loss).backward()
 
