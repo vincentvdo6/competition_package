@@ -1,5 +1,5 @@
-# GRU v2 augmentation: baseline match + variance stretch/compress
-# Change: random per-sequence feature scaling during training (0.8x-1.2x)
+# GRU v2 augmentation: baseline match + variance stretch/compress (FIXED v2)
+# Fix: gentler scale range 0.95-1.05 (was 0.8-1.2, too aggressive for normalized data)
 # Source: sultanmunirov on Discord - got 5x more data via augmentation
 
 model:
@@ -28,7 +28,7 @@ training:
     min_lr: 1e-6
   augmentation:
     enabled: true
-    scale_range: [0.8, 1.2]
+    scale_range: [0.95, 1.05]
 
 data:
   train_path: datasets/train.parquet

@@ -1,5 +1,6 @@
-# GRU v2 chrono: baseline match + chrono initialization
+# GRU v2 chrono: baseline match + chrono initialization (FIXED v2)
 # Change: chrono_init biases GRU update gate toward long-term memory persistence
+# Fix: only bias_hh (not both), T=10 (not 100) to avoid gate saturation
 # Source: sultanmunirov on Discord - "huge boost" from chrono init
 
 model:
@@ -11,7 +12,7 @@ model:
   output_size: 2
   output_type: linear
   chrono_init: true
-  chrono_max_period: 100
+  chrono_max_period: 10
 
 training:
   lr: 0.001

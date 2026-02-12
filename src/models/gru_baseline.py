@@ -76,23 +76,24 @@ class GRUBaseline(BaseModel):
             max_period = model_cfg.get('chrono_max_period', 100)
             self._apply_chrono_init(max_period)
     
-    def _apply_chrono_init(self, max_period: int = 100):
+    def _apply_chrono_init(self, max_period: int = 10):
         """Chrono initialization: bias GRU update gate toward persistence.
 
-        Sets update gate (z) bias to log(U(1, max_period)), making z_t
-        default to high values so h_t ≈ h_{t-1} (long-term memory).
+        Sets update gate (z) bias_hh only to log(U(1, max_period)), making z_t
+        default to moderately high values so h_t leans toward h_{t-1}.
+        Only bias_hh is set (not bias_ih) to avoid double-bias saturation.
         PyTorch GRU gate order: [reset, update, new], each of size hidden_size.
         """
-        import math
         for layer_idx in range(self.num_layers):
-            # bias_ih and bias_hh both have shape (3 * hidden_size,)
-            for bias_name in [f'bias_ih_l{layer_idx}', f'bias_hh_l{layer_idx}']:
-                bias = getattr(self.gru, bias_name)
-                h = self.hidden_size
-                # Update gate bias at index [h:2h]
-                with torch.no_grad():
-                    # log(U(1, max_period)) gives values in [0, log(max_period)]
-                    bias[h:2*h].uniform_(1, max_period).log_()
+            h = self.hidden_size
+            with torch.no_grad():
+                # Only set bias_hh (recurrent bias), leave bias_ih at default
+                bias_hh = getattr(self.gru, f'bias_hh_l{layer_idx}')
+                # log(U(1, T)) gives values in [0, log(T)] ≈ [0, 2.3] for T=10
+                bias_hh[h:2*h].uniform_(1, max_period).log_()
+                # Zero the corresponding bias_ih update gate to avoid double-bias
+                bias_ih = getattr(self.gru, f'bias_ih_l{layer_idx}')
+                bias_ih[h:2*h].zero_()
 
     def forward(
         self,
