@@ -208,3 +208,68 @@ def create_dataloaders(
     )
 
     return train_loader, valid_loader, train_dataset.normalizer
+
+
+def create_fulldata_loader(
+    train_path: str,
+    valid_path: str,
+    batch_size: int = 32,
+    normalize: bool = True,
+    pin_memory: bool = False,
+    derived_features: bool = False,
+    temporal_features: bool = False,
+    interaction_features: bool = False,
+    microstructure_features: bool = False,
+) -> Tuple[DataLoader, 'Normalizer']:
+    """Create a single dataloader from train+val combined.
+
+    Concatenates train and valid parquets with seq_ix offset to avoid collisions.
+    Used for full-data training (no validation-based early stopping).
+    """
+    train_df = pd.read_parquet(train_path)
+    valid_df = pd.read_parquet(valid_path)
+
+    # Dynamic offset: max(train_seq_ix) + 1 to guarantee no collisions
+    offset = int(train_df['seq_ix'].max()) + 1
+    valid_df = valid_df.copy()
+    valid_df['seq_ix'] = valid_df['seq_ix'] + offset
+    print(f"Full-data: train seqs={train_df['seq_ix'].nunique()}, "
+          f"val seqs={valid_df['seq_ix'].nunique()}, offset={offset}")
+
+    # Concatenate
+    combined_df = pd.concat([train_df, valid_df], ignore_index=True)
+    del train_df, valid_df
+
+    # Write to temp parquet for LOBSequenceDataset
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(suffix='.parquet', delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    combined_df.to_parquet(tmp_path)
+    del combined_df
+
+    dataset = LOBSequenceDataset(
+        tmp_path,
+        normalize=normalize,
+        derived_features=derived_features,
+        temporal_features=temporal_features,
+        interaction_features=interaction_features,
+        microstructure_features=microstructure_features,
+    )
+
+    # Clean up temp file
+    import os as _os
+    try:
+        _os.unlink(tmp_path)
+    except OSError:
+        pass
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=pin_memory,
+    )
+
+    return loader, dataset.normalizer

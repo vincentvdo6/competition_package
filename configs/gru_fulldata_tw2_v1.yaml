@@ -1,0 +1,41 @@
+# GRU full-data training (train+val combined)
+# Base: gru_derived_tightwd_v2 (best generalizing config)
+# Change: Train on train+val, no early stopping, fixed epoch count
+# Use with: python scripts/train.py --config configs/gru_fulldata_tw2_v1.yaml --fulldata --fixed-epochs N --seed S
+
+model:
+  type: gru
+  input_size: 42
+  hidden_size: 144
+  num_layers: 2
+  dropout: 0.22
+  output_size: 2
+
+training:
+  lr: 0.0008
+  weight_decay: 5e-5
+  epochs: 35
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 999
+  loss: combined
+  weighted_ratio: 0.62
+  use_amp: true
+  scheduler:
+    type: cosine_warmup
+    warmup_fraction: 0.1
+    min_lr: 2e-5
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: true
+  derived_features: true
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5

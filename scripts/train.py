@@ -13,7 +13,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from src.data.dataset import create_dataloaders
+from src.data.dataset import create_dataloaders, create_fulldata_loader
 from src.models.gru_attention import GRUAttentionModel
 from src.models.gru_baseline import GRUBaseline
 from src.models.lstm_model import LSTMModel
@@ -65,6 +65,10 @@ def main():
                         help='Device to use (cuda/cpu/auto)')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed for reproducibility')
+    parser.add_argument('--fulldata', action='store_true',
+                        help='Train on train+val combined (no validation)')
+    parser.add_argument('--fixed-epochs', type=int, default=0,
+                        help='Override epoch count (0 = use config). Used with --fulldata.')
     args = parser.parse_args()
 
     # Set seed
@@ -104,7 +108,7 @@ def main():
     interaction_features = data_cfg.get('interaction_features', False)
     use_gpu = device.type == 'cuda'
 
-    print(f"Loading data from {train_path} and {valid_path}...")
+    microstructure_features = data_cfg.get('microstructure_features', False)
     feature_dim = 32
     if derived_features:
         feature_dim += 10
@@ -112,7 +116,6 @@ def main():
         feature_dim += 3
     if interaction_features:
         feature_dim += 3
-    microstructure_features = data_cfg.get('microstructure_features', False)
     if microstructure_features:
         feature_dim += 6
     print(
@@ -120,23 +123,46 @@ def main():
         f"interaction={interaction_features}, microstructure={microstructure_features} "
         f"-> input_size={feature_dim}"
     )
-    window_size = int(data_cfg.get('window_size', 0))
-    if window_size > 0:
-        print(f"Windowed training: random {window_size}-step crops (zero hidden state)")
 
-    train_loader, valid_loader, normalizer = create_dataloaders(
-        train_path=train_path,
-        valid_path=valid_path,
-        batch_size=batch_size,
-        normalize=normalize,
-        pin_memory=use_gpu,
-        derived_features=derived_features,
-        temporal_features=temporal_features,
-        interaction_features=interaction_features,
-        microstructure_features=microstructure_features,
-        window_size=window_size,
-    )
-    print(f"Train batches: {len(train_loader)}, Valid batches: {len(valid_loader)}")
+    if args.fulldata:
+        # Full-data mode: train on train+val combined, no validation
+        print(f"FULL-DATA MODE: combining {train_path} + {valid_path}")
+        train_loader, normalizer = create_fulldata_loader(
+            train_path=train_path,
+            valid_path=valid_path,
+            batch_size=batch_size,
+            normalize=normalize,
+            pin_memory=use_gpu,
+            derived_features=derived_features,
+            temporal_features=temporal_features,
+            interaction_features=interaction_features,
+            microstructure_features=microstructure_features,
+        )
+        valid_loader = None  # No validation in fulldata mode
+        # Disable early stopping — train for fixed epochs
+        config.setdefault('training', {})['early_stopping_patience'] = 999
+        if args.fixed_epochs > 0:
+            config['training']['epochs'] = args.fixed_epochs
+            print(f"Fixed epochs: {args.fixed_epochs}")
+        print(f"Train batches: {len(train_loader)} (no validation)")
+    else:
+        print(f"Loading data from {train_path} and {valid_path}...")
+        window_size = int(data_cfg.get('window_size', 0))
+        if window_size > 0:
+            print(f"Windowed training: random {window_size}-step crops (zero hidden state)")
+        train_loader, valid_loader, normalizer = create_dataloaders(
+            train_path=train_path,
+            valid_path=valid_path,
+            batch_size=batch_size,
+            normalize=normalize,
+            pin_memory=use_gpu,
+            derived_features=derived_features,
+            temporal_features=temporal_features,
+            interaction_features=interaction_features,
+            microstructure_features=microstructure_features,
+            window_size=window_size,
+        )
+        print(f"Train batches: {len(train_loader)}, Valid batches: {len(valid_loader)}")
 
     # Save normalizer for inference
     log_dir = config.get('logging', {}).get('log_dir', 'logs')
@@ -174,7 +200,10 @@ def main():
     print("\n" + "=" * 60)
     history = trainer.train()
     print("=" * 60)
-    print(f"\nTraining complete. Best validation score: {trainer.best_score:.4f}")
+    if args.fulldata:
+        print(f"\nFull-data training complete. Final epoch: {trainer.best_epoch}")
+    else:
+        print(f"\nTraining complete. Best validation score: {trainer.best_score:.4f}")
 
 
 if __name__ == '__main__':
