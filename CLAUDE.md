@@ -1,5 +1,21 @@
 # Wunderfund Predictorium RNN Challenge
 
+## CRITICAL: Notebook Rules (NEVER VIOLATE)
+- **NEVER use `os.system()` in Colab/Jupyter notebooks** — it swallows ALL output silently.
+- **ALWAYS use `subprocess.Popen`** with streaming:
+```python
+proc = subprocess.Popen(
+    [sys.executable, "-u", "scripts/train.py", ...args...],
+    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+)
+for line in proc.stdout:
+    print(line, end="", flush=True)
+proc.wait()
+```
+- **ALWAYS commit+push before running Colab notebooks** — they `git clone` from remote.
+
+---
+
 ## Collaboration Protocol (Claude Code + Codex)
 
 Claude Code and Codex are **equal contributors**. Neither has dominance. Codex is connected as an MCP server — Claude routes tasks to it.
