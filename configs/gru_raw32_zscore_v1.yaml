@@ -1,0 +1,42 @@
+# Raw 32 features WITH z-score normalization (ablation: isolate features vs normalization)
+# Base: gru_derived_tightwd_v2 with ONE change: derived_features: false
+# Tests whether raw 32 is better/worse than derived 42 when normalization is kept constant
+# Kill test: 3 seeds, compare to tightwd_v2 val ~0.266
+
+model:
+  type: gru
+  input_size: 32
+  hidden_size: 144
+  num_layers: 2
+  dropout: 0.22
+  output_size: 2
+
+training:
+  lr: 0.0008
+  weight_decay: 5e-5
+  epochs: 35
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 8
+  loss: combined
+  weighted_ratio: 0.62
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 3
+    min_lr: 1e-6
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: true
+  derived_features: false
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5
