@@ -43,7 +43,7 @@ class LOBSequenceDataset(Dataset):
         temporal_features: bool = False,
         interaction_features: bool = False,
         microstructure_features: bool = False,
-        revin: bool = False,
+        revin = False,  # False, True/'full' (full-sequence), or 'causal' (running stats)
     ):
         self.derived_features = derived_features
         self.temporal_features = temporal_features and derived_features  # temporal requires derived
@@ -106,12 +106,31 @@ class LOBSequenceDataset(Dataset):
             flat[:] = self.normalizer.transform(flat)
 
         # RevIN: per-sequence instance normalization (applied after global z-score)
-        if revin:
+        # revin=True or 'full': full-sequence stats (lookahead — val only, NOT for LB)
+        # revin='causal': running stats at each step (matches online inference)
+        revin_mode = None
+        if isinstance(revin, str):
+            revin_mode = revin  # 'full' or 'causal'
+        elif revin:
+            revin_mode = 'full'
+
+        if revin_mode == 'full':
             for i in range(n_seqs):
                 seq = features_all[i]  # (1000, n_features)
-                seq_mean = seq.mean(axis=0, keepdims=True)  # (1, n_features)
+                seq_mean = seq.mean(axis=0, keepdims=True)
                 seq_std = np.maximum(seq.std(axis=0, keepdims=True), 1e-5)
                 features_all[i] = (seq - seq_mean) / seq_std
+        elif revin_mode == 'causal':
+            T = features_all.shape[1]
+            counts = np.arange(1, T + 1, dtype=np.float64).reshape(1, -1, 1)
+            for i in range(n_seqs):
+                seq = features_all[i].astype(np.float64)  # (1000, F)
+                cumsum = np.cumsum(seq, axis=0)  # (1000, F)
+                cumsq = np.cumsum(seq ** 2, axis=0)  # (1000, F)
+                running_mean = cumsum / counts[0]  # (1000, F)
+                running_var = cumsq / counts[0] - running_mean ** 2
+                running_std = np.sqrt(np.maximum(running_var, 1e-10))
+                features_all[i] = ((seq - running_mean) / running_std).astype(np.float32)
 
         # Convert to contiguous tensors (zero-copy from numpy)
         self.features = torch.from_numpy(np.ascontiguousarray(features_all))
@@ -171,7 +190,7 @@ def create_dataloaders(
     interaction_features: bool = False,
     microstructure_features: bool = False,
     window_size: int = 0,
-    revin: bool = False,
+    revin = False,
 ) -> Tuple[DataLoader, DataLoader, Optional[Normalizer]]:
     """Create train and validation dataloaders with shared normalizer.
 
