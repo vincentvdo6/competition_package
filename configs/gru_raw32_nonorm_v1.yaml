@@ -1,0 +1,45 @@
+# Raw 32 features + NO normalization (3-AI consensus: Claude + Codex + Gemini)
+# Base: gru_derived_tightwd_v2 with two critical changes:
+#   1. derived_features: false (raw 32 only, no derived)
+#   2. normalize: false (no z-score — let model's LayerNorm handle it)
+# Safety: grad_clip increased to 5.0 (raw magnitudes, though data is pre-scaled to [-5.2, 5.2])
+# AMP re-enabled: raw data is [-5.2, 5.2], NOT raw prices — fp16 overflow impossible
+# Kill test: 3 seeds (s42/s43/s44), pass if val >= 0.255
+
+model:
+  type: gru
+  input_size: 32
+  hidden_size: 144
+  num_layers: 2
+  dropout: 0.22
+  output_size: 2
+
+training:
+  lr: 0.0008
+  weight_decay: 5e-5
+  epochs: 35
+  batch_size: 192
+  gradient_clip: 5.0
+  early_stopping_patience: 8
+  loss: combined
+  weighted_ratio: 0.62
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 3
+    min_lr: 1e-6
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: false
+  derived_features: false
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5
