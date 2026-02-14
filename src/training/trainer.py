@@ -67,6 +67,67 @@ class EMA:
                 param.data.copy_(backup[name])
 
 
+class SAM:
+    """Sharpness-Aware Minimization optimizer wrapper.
+
+    Finds parameters in flat loss regions for better generalization.
+    Two-step optimization: (1) perturb to worst-case, (2) compute update there.
+    Reference: https://arxiv.org/abs/2010.01412
+    """
+
+    def __init__(self, params, base_optimizer_cls, rho=0.05, **kwargs):
+        self.base_optimizer = base_optimizer_cls(params, **kwargs)
+        self.rho = rho
+        self._e_w = {}  # separate storage for perturbation vectors
+
+    @torch.no_grad()
+    def first_step(self):
+        """Perturb weights toward steepest ascent direction (worst-case)."""
+        grad_norm = self._grad_norm()
+        scale = self.rho / (grad_norm + 1e-12)
+        for group in self.base_optimizer.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                e_w = p.grad * scale
+                p.add_(e_w)
+                self._e_w[p] = e_w.clone()
+
+    @torch.no_grad()
+    def second_step(self):
+        """Undo perturbation, then take optimizer step with worst-case gradients."""
+        for group in self.base_optimizer.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                if p in self._e_w:
+                    p.sub_(self._e_w[p])
+        self.base_optimizer.step()
+
+    def zero_grad(self, set_to_none=False):
+        self.base_optimizer.zero_grad(set_to_none=set_to_none)
+
+    @property
+    def param_groups(self):
+        return self.base_optimizer.param_groups
+
+    def state_dict(self):
+        return self.base_optimizer.state_dict()
+
+    def load_state_dict(self, state_dict):
+        self.base_optimizer.load_state_dict(state_dict)
+
+    def _grad_norm(self):
+        norms = []
+        for group in self.base_optimizer.param_groups:
+            for p in group["params"]:
+                if p.grad is not None:
+                    norms.append(p.grad.norm(2))
+        if not norms:
+            return torch.tensor(0.0)
+        return torch.stack(norms).norm(2)
+
+
 class Trainer:
     """Training loop with validation, early stopping, and logging."""
 
@@ -112,10 +173,21 @@ class Trainer:
         opt_type = train_cfg.get('optimizer', 'adamw').lower()
         opt_lr = float(train_cfg.get('lr', 0.001))
         opt_wd = float(train_cfg.get('weight_decay', 1e-5))
-        if opt_type == 'adam':
+        self.use_sam = opt_type == 'sam'
+        if self.use_sam:
+            sam_rho = float(train_cfg.get('sam_rho', 0.05))
+            base_opt_name = train_cfg.get('sam_base_optimizer', 'adamw').lower()
+            base_opt_cls = Adam if base_opt_name == 'adam' else AdamW
+            self.sam = SAM(model.parameters(), base_opt_cls, rho=sam_rho,
+                           lr=opt_lr, weight_decay=opt_wd)
+            self.optimizer = self.sam.base_optimizer  # for scheduler compatibility
+            print(f"SAM optimizer: rho={sam_rho}, base={base_opt_name}", flush=True)
+        elif opt_type == 'adam':
             self.optimizer = Adam(model.parameters(), lr=opt_lr, weight_decay=opt_wd)
+            self.sam = None
         else:
             self.optimizer = AdamW(model.parameters(), lr=opt_lr, weight_decay=opt_wd)
+            self.sam = None
 
         # Learning rate scheduler
         sched_cfg = train_cfg.get('scheduler', {})
@@ -287,6 +359,60 @@ class Trainer:
                     self.ema.update(self.model)
 
                 total_loss += chunk_loss_sum / max(n_chunks, 1)
+            elif self.use_sam:
+                # SAM two-step optimization (no AMP — SAM + GradScaler is fragile)
+                # Step 1: compute gradients at current point
+                self.sam.zero_grad(set_to_none=True)
+
+                if self.use_aux:
+                    predictions, _, aux = self.model(features, return_aux=True)
+                    loss = self.loss_fn(predictions, targets, mask,
+                                        temporal_weights=self.temporal_weights,
+                                        aux_predictions=aux)
+                else:
+                    predictions, _ = self.model(features)
+                    if self.temporal_weights is not None:
+                        loss = self.loss_fn(predictions, targets, mask,
+                                            temporal_weights=self.temporal_weights)
+                    else:
+                        loss = self.loss_fn(predictions, targets, mask)
+
+                loss.backward()
+                if self.gradient_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip)
+
+                # Perturb to worst-case neighborhood
+                self.sam.first_step()
+
+                # Step 2: compute gradients at perturbed point
+                self.sam.zero_grad(set_to_none=True)
+                if self.use_aux:
+                    predictions2, _, aux2 = self.model(features, return_aux=True)
+                    loss2 = self.loss_fn(predictions2, targets, mask,
+                                         temporal_weights=self.temporal_weights,
+                                         aux_predictions=aux2)
+                else:
+                    predictions2, _ = self.model(features)
+                    if self.temporal_weights is not None:
+                        loss2 = self.loss_fn(predictions2, targets, mask,
+                                             temporal_weights=self.temporal_weights)
+                    else:
+                        loss2 = self.loss_fn(predictions2, targets, mask)
+
+                loss2.backward()
+                if self.gradient_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip)
+
+                # Undo perturbation + update with worst-case gradients
+                self.sam.second_step()
+
+                if self.ema is not None:
+                    self.ema.update(self.model)
+
+                if self.sched_type == 'one_cycle':
+                    self.scheduler.step()
+
+                total_loss += loss.item()
             else:
                 self.optimizer.zero_grad(set_to_none=True)
 
