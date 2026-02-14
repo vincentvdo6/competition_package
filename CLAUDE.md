@@ -89,7 +89,15 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 - **Valid**: 1,444 sequences x 1000 steps each
 - **Features**: 32 raw (bid/ask prices p0-p11, volumes v0-v11, trade dp0-dv3)
 - **need_prediction**: True for steps 99-999 (90.1% of steps), False for warm-up 0-98
-- **Online inference**: Process one step at a time, reset hidden state on new seq_ix
+- **Two inference modes**: Step-by-step (stateful hidden) OR windowed (last N steps, fresh hidden)
+
+### CRITICAL: Windowed Inference Discovery (Feb 13)
+- **Official baseline uses WINDOWED inference** (feeds last 100 steps each prediction, no carried hidden state)
+- Our models used step-by-step (carry hidden state). This caused **catastrophic -0.034 gap** for baseline_match on LB.
+- Official baseline: val=0.2595, LB=**0.2761** → **+0.017 POSITIVE gap** (test easier than val)
+- Windowed vs step-by-step makes ~0 difference on val (±0.0006), but may differ hugely on LB
+- **3 windowed A/B test submissions pending LB results** (Feb 13)
+- Script: `scripts/build_windowed_submission.py` builds single-model windowed zips
 
 ### Submission Budget
 - **5 submissions per day**
@@ -121,6 +129,9 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | champion_v4_top2attn | TIMEOUT | 5G+2A | 4199s | Server variance |
 | 5 GRU + 3 attn uniform | TIMEOUT | 5G+3A | 4200s | Too many attn |
 | champion_tcn_5g2a2t v1 | TIMEOUT | 5G+2A+2T | 4200s | PyTorch TCN too slow |
+| windowed_tw2_s42_w100 | **PENDING** | 1 GRU windowed | ~1500s est | tightwd_v2 windowed A/B |
+| windowed_bm_s42_w100 | **PENDING** | 1 GRU windowed | ~500s est | baseline_match windowed A/B |
+| official_baseline_control | **PENDING** | 1 GRU windowed | ~501s est | Repacked official baseline |
 
 ### Val-to-LB Calibration (10 data points)
 | Submission | Val | LB | Gap | # Models |
@@ -258,13 +269,16 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 - Ensemble tuning exhausted. GRU scaling KILLED. Model quality is the bottleneck.
 - ONNX gives 1844s headroom (2356s vs 4200s) — room for new architecture branches.
 
-### Priority Order (Codex-agreed, 2026-02-14)
+### Priority Order (updated Feb 13)
 
 | P | Approach | Expected Gain | Risk | Status |
 |---|----------|--------------|------|--------|
-| 1 | **Metric-aligned loss v2** (Pearson-primary after warmup) | +0.004 to +0.008 | Low | TODO |
-| 2 | **Multi-horizon aux heads** (delta/sign heads, train-only) | +0.002 to +0.005 | Low | TODO |
-| 3 | **Small causal Transformer branch** (d=64, 2 blocks) | +0.003 to +0.007 | Medium | TODO |
+| 0 | **Windowed inference A/B test** | unknown — could be huge | Low | **SUBMITTED, AWAITING LB** |
+| 1 | **Metric-aligned loss v2** (Pearson-primary after warmup) | +0.004 to +0.008 | Low | **KILLED** (all negative) |
+| 2 | **Multi-horizon aux heads** (delta/sign heads, train-only) | +0.002 to +0.005 | Low | **KILLED** (all negative) |
+| 3 | **Small causal Transformer branch** (d=64, 2 blocks) | +0.003 to +0.007 | Medium | **KILLED** (all negative) |
+| 4 | **Full-data training** (train+val combined) | +0.005 | Low | **KILLED** (-0.0008 to -0.0125) |
+| 5 | **Stronger regularization** (WD=2e-4, dropout=0.30, OneCycleLR) | +0.003 | Low | **KILLED** (-0.0049, 0/3 positive) |
 
 ### Approach #1: Metric-Aligned Loss v2
 **What changes vs current**: Current PearsonCombined uses 60% CombinedLoss + 40% Pearson, with Pearson weighting t0/t1 equally. Changes:
@@ -291,12 +305,10 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 - #3 is biggest effort, only after #1/#2 are resolved
 
 ### IMMEDIATE NEXT STEPS (for next chat session)
-1. **Implement metric-aligned loss v2** in `src/evaluation/metrics.py`:
-   - New class `PearsonPrimaryLoss` with per-target weighting + Huber stabilizer + warmup
-   - New config `gru_pearson_primary_v1.yaml`
-2. **Create kill test notebook** (notebook 14) for Colab
-3. **Train 3 seeds** of GRU with new loss, evaluate
-4. **If pass**: Retrain all model types (GRU, Attn, TCN) with new loss, cache, build ensemble
+1. **Check LB results** for 3 windowed A/B submissions (official_baseline_control, windowed_tw2, windowed_bm)
+2. **If windowed_bm scores >0.265**: Windowed inference is the key. Build windowed ensemble (multi-model).
+3. **If windowed_bm scores poorly**: Training recipe difference. Investigate optimizer/schedule/data differences.
+4. **Regardless**: Consider windowed ensemble builder for champion models (5G+2A+2T with windowed GRUs)
 
 ### Submission Strategy Rules
 1. **One hypothesis per submission** (no multi-change confounding)
@@ -332,6 +344,7 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 | test_tcn_fast.py | Benchmark TCNFast (numpy) vs PyTorch speed + correctness |
 | average_checkpoints.py | Average state_dict across epoch checkpoints (unused — EMA killed) |
 | verify_submission.py | Pre-submit checks: keys, normalizer dims, TCNFast, timing |
+| build_windowed_submission.py | Build single-model windowed inference zip (NEW Feb 13) |
 
 ### Source Code (src/)
 - `src/models/gru_baseline.py` — GRU with input projection + LayerNorm + output MLP

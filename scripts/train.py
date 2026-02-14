@@ -109,6 +109,7 @@ def main():
     use_gpu = device.type == 'cuda'
 
     microstructure_features = data_cfg.get('microstructure_features', False)
+    revin = data_cfg.get('revin', False)
     feature_dim = 32
     if derived_features:
         feature_dim += 10
@@ -120,8 +121,8 @@ def main():
         feature_dim += 6
     print(
         f"Feature pipeline: derived={derived_features}, temporal={temporal_features}, "
-        f"interaction={interaction_features}, microstructure={microstructure_features} "
-        f"-> input_size={feature_dim}"
+        f"interaction={interaction_features}, microstructure={microstructure_features}, "
+        f"revin={revin} -> input_size={feature_dim}"
     )
 
     if args.fulldata:
@@ -161,6 +162,7 @@ def main():
             interaction_features=interaction_features,
             microstructure_features=microstructure_features,
             window_size=window_size,
+            revin=revin,
         )
         print(f"Train batches: {len(train_loader)}, Valid batches: {len(valid_loader)}")
 

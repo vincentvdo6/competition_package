@@ -43,6 +43,7 @@ class LOBSequenceDataset(Dataset):
         temporal_features: bool = False,
         interaction_features: bool = False,
         microstructure_features: bool = False,
+        revin: bool = False,
     ):
         self.derived_features = derived_features
         self.temporal_features = temporal_features and derived_features  # temporal requires derived
@@ -104,6 +105,14 @@ class LOBSequenceDataset(Dataset):
             flat = features_all.reshape(-1, n_features)
             flat[:] = self.normalizer.transform(flat)
 
+        # RevIN: per-sequence instance normalization (applied after global z-score)
+        if revin:
+            for i in range(n_seqs):
+                seq = features_all[i]  # (1000, n_features)
+                seq_mean = seq.mean(axis=0, keepdims=True)  # (1, n_features)
+                seq_std = np.maximum(seq.std(axis=0, keepdims=True), 1e-5)
+                features_all[i] = (seq - seq_mean) / seq_std
+
         # Convert to contiguous tensors (zero-copy from numpy)
         self.features = torch.from_numpy(np.ascontiguousarray(features_all))
         self.targets = torch.from_numpy(np.ascontiguousarray(targets_all))
@@ -162,6 +171,7 @@ def create_dataloaders(
     interaction_features: bool = False,
     microstructure_features: bool = False,
     window_size: int = 0,
+    revin: bool = False,
 ) -> Tuple[DataLoader, DataLoader, Optional[Normalizer]]:
     """Create train and validation dataloaders with shared normalizer.
 
@@ -174,6 +184,7 @@ def create_dataloaders(
         temporal_features=temporal_features,
         interaction_features=interaction_features,
         microstructure_features=microstructure_features,
+        revin=revin,
     )
 
     valid_dataset = LOBSequenceDataset(
@@ -184,6 +195,7 @@ def create_dataloaders(
         temporal_features=temporal_features,
         interaction_features=interaction_features,
         microstructure_features=microstructure_features,
+        revin=revin,
     )
 
     # Wrap train in windowed sampling if requested
