@@ -1,0 +1,41 @@
+# GRU regularized v1: stronger regularization + OneCycleLR
+# Base: gru_derived_tightwd_v2
+# Changes: WD 5e-5→2e-4, dropout 0.22→0.30, OneCycleLR(max_lr=2e-3, pct_start=0.1)
+# Kill test: 3 seeds, pass if mean val >= 0.2596 AND >=2/3 positive vs tightwd_v2
+
+model:
+  type: gru
+  input_size: 42
+  hidden_size: 144
+  num_layers: 2
+  dropout: 0.30
+  output_size: 2
+
+training:
+  lr: 0.0008
+  weight_decay: 2e-4
+  epochs: 35
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 8
+  loss: combined
+  weighted_ratio: 0.62
+  use_amp: true
+  scheduler:
+    type: one_cycle
+    max_lr: 2e-3
+    pct_start: 0.1
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: true
+  derived_features: true
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5

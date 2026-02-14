@@ -122,11 +122,14 @@ class Trainer:
         sched_type = sched_cfg.get('type', 'reduce_on_plateau')
 
         if sched_type == 'one_cycle':
+            oc_max_lr = float(sched_cfg.get('max_lr', float(train_cfg.get('lr', 0.001)) * 10))
+            oc_pct_start = float(sched_cfg.get('pct_start', 0.3))
             self.scheduler = OneCycleLR(
                 self.optimizer,
-                max_lr=float(train_cfg.get('lr', 0.001)) * 10,
+                max_lr=oc_max_lr,
                 epochs=self.epochs,
                 steps_per_epoch=len(train_loader),
+                pct_start=oc_pct_start,
             )
             self.sched_type = 'one_cycle'
         elif sched_type == 'cosine_warmup':
