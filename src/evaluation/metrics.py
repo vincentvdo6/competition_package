@@ -450,6 +450,51 @@ class PearsonPrimaryLoss(nn.Module):
         return loss
 
 
+class CoReWrapper(nn.Module):
+    """Wraps any loss with CoRe (Coherency Regularization) via cosine similarity.
+
+    Penalizes pred_t0 and pred_t1 pointing in different directions.
+    Uses cosine similarity (not MSE) to respect different target scales.
+    Lambda anneals linearly from 0 to core_lambda over warmup_epochs.
+    """
+
+    def __init__(self, base_loss: nn.Module, core_lambda: float = 0.05,
+                 warmup_epochs: int = 5):
+        super().__init__()
+        self.base_loss = base_loss
+        self.core_lambda = core_lambda
+        self.warmup_epochs = warmup_epochs
+        self.current_epoch = 0
+
+    def set_epoch(self, epoch: int):
+        self.current_epoch = epoch
+        if hasattr(self.base_loss, 'set_epoch'):
+            self.base_loss.set_epoch(epoch)
+
+    @property
+    def current_lambda(self) -> float:
+        if self.current_epoch >= self.warmup_epochs:
+            return self.core_lambda
+        return self.core_lambda * (self.current_epoch / max(1, self.warmup_epochs))
+
+    def forward(self, predictions, targets, mask=None, temporal_weights=None,
+                **kwargs):
+        loss = self.base_loss(predictions, targets, mask, temporal_weights,
+                              **kwargs)
+        lam = self.current_lambda
+        if lam > 0:
+            if mask is not None:
+                pred_flat = predictions.reshape(-1, 2)[mask.reshape(-1)]
+            else:
+                pred_flat = predictions.reshape(-1, 2)
+            if pred_flat.shape[0] > 1:
+                cos_sim = torch.nn.functional.cosine_similarity(
+                    pred_flat[:, 0:1], pred_flat[:, 1:2], dim=0
+                )
+                loss = loss + lam * (1.0 - cos_sim)
+        return loss
+
+
 class HuberWeightedLoss(nn.Module):
     """Weighted Huber loss for robust training.
 

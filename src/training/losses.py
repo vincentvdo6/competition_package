@@ -10,6 +10,7 @@ from src.evaluation.metrics import (
     WeightedPearsonLoss,
     PearsonCombinedLoss,
     PearsonPrimaryLoss,
+    CoReWrapper,
 )
 
 
@@ -26,12 +27,12 @@ class MaskedMSELoss(nn.Module):
 
 def get_loss_function(config: dict) -> nn.Module:
     """Factory function for loss functions.
-    
+
     Args:
         config: Configuration dictionary with 'training' section containing:
             - loss: Loss type ('mse', 'weighted_mse', 'combined', 'huber')
             - weighted_ratio: Blend ratio for combined loss (default: 0.5)
-    
+
     Returns:
         Loss function module
     """
@@ -40,23 +41,23 @@ def get_loss_function(config: dict) -> nn.Module:
     target_weights = training_cfg.get('target_weights', None)
 
     if loss_type == 'mse':
-        return MaskedMSELoss()
+        loss_fn = MaskedMSELoss()
     elif loss_type == 'weighted_mse':
-        return WeightedMSELoss(target_weights=target_weights)
+        loss_fn = WeightedMSELoss(target_weights=target_weights)
     elif loss_type == 'combined':
         ratio = training_cfg.get('weighted_ratio', 0.5)
-        return CombinedLoss(weighted_ratio=ratio, target_weights=target_weights)
+        loss_fn = CombinedLoss(weighted_ratio=ratio, target_weights=target_weights)
     elif loss_type == 'huber':
         delta = training_cfg.get('huber_delta', 1.0)
-        return HuberWeightedLoss(delta=delta)
+        loss_fn = HuberWeightedLoss(delta=delta)
     elif loss_type == 'weighted_pearson':
         eps = float(training_cfg.get('pearson_eps', 1e-6))
-        return WeightedPearsonLoss(eps=eps)
+        loss_fn = WeightedPearsonLoss(eps=eps)
     elif loss_type == 'pearson_combined':
         alpha = float(training_cfg.get('pearson_alpha', 0.6))
         ratio = float(training_cfg.get('weighted_ratio', 0.62))
         eps = float(training_cfg.get('pearson_eps', 1e-6))
-        return PearsonCombinedLoss(
+        loss_fn = PearsonCombinedLoss(
             alpha=alpha, weighted_ratio=ratio, eps=eps,
             target_weights=target_weights,
         )
@@ -67,10 +68,19 @@ def get_loss_function(config: dict) -> nn.Module:
         huber_delta = float(training_cfg.get('huber_delta', 1.0))
         target_ratio = float(training_cfg.get('target_ratio', 0.62))
         eps = float(training_cfg.get('pearson_eps', 1e-6))
-        return PearsonPrimaryLoss(
+        loss_fn = PearsonPrimaryLoss(
             alpha=alpha, warmup_alpha=warmup_alpha,
             warmup_epochs=warmup_epochs, huber_delta=huber_delta,
             target_ratio=target_ratio, eps=eps,
         )
     else:
         raise ValueError(f"Unknown loss type: {loss_type}")
+
+    # Wrap with CoRe (Coherency Regularization) if configured
+    core_lambda = float(training_cfg.get('core_lambda', 0.0))
+    if core_lambda > 0:
+        warmup = int(training_cfg.get('core_warmup_epochs', 5))
+        loss_fn = CoReWrapper(loss_fn, core_lambda=core_lambda,
+                              warmup_epochs=warmup)
+
+    return loss_fn

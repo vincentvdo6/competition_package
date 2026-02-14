@@ -38,6 +38,30 @@ class GRUBaseline(BaseModel):
         self.output_size = model_cfg.get('output_size', 2)
         self.vanilla = model_cfg.get('vanilla', False)
 
+        # CVML block: learnable nonlinear feature mixing with residual
+        self.use_cvml = model_cfg.get('cvml', False)
+        if self.use_cvml:
+            self.cvml = nn.Sequential(
+                nn.Linear(self.input_size, self.input_size * 2),
+                nn.GELU(),
+                nn.Dropout(self.dropout),
+                nn.Linear(self.input_size * 2, self.input_size),
+            )
+            # Zero-init second linear so block starts as identity
+            nn.init.zeros_(self.cvml[3].weight)
+            nn.init.zeros_(self.cvml[3].bias)
+
+        # SE-Net feature gate: per-timestep feature weighting
+        self.use_feature_gate = model_cfg.get('feature_gate', False)
+        if self.use_feature_gate:
+            bottleneck = max(self.input_size // 4, 4)
+            self.feat_gate = nn.Sequential(
+                nn.Linear(self.input_size, bottleneck),
+                nn.ReLU(),
+                nn.Linear(bottleneck, self.input_size),
+                nn.Sigmoid(),
+            )
+
         # Input projection (skipped in vanilla mode — raw features go directly to GRU)
         if not self.vanilla:
             self.input_proj = nn.Linear(self.input_size, self.hidden_size)
@@ -124,6 +148,14 @@ class GRUBaseline(BaseModel):
         if hidden is None:
             hidden = self.init_hidden(batch_size)
             hidden = hidden.to(x.device)
+
+        # CVML: learnable feature mixing (residual)
+        if self.use_cvml:
+            x = x + self.cvml(x)
+
+        # SE-Net: per-timestep feature gating
+        if self.use_feature_gate:
+            x = x * self.feat_gate(x)
 
         if not self.vanilla:
             x = self.input_proj(x)
