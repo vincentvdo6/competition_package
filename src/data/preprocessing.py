@@ -328,6 +328,75 @@ class MicrostructureBuffer:
         return np.concatenate([features, micro]).astype(np.float32)
 
 
+class LagFeatureBuilder:
+    """Compute multi-horizon lag-diff features from raw LOB features.
+
+    For each selected feature, computes x_t - x_{t-k} for k in LAG_WINDOWS.
+    Pads initial steps with 0. All lags are causal (no lookahead).
+    """
+
+    # Raw feature indices to lag
+    LAG_INDICES = [0, 6, 12, 24]  # p0 (best bid), p6 (best ask), v0 (bid vol), dp0 (trade price)
+    LAG_WINDOWS = [1, 4, 16]      # short, medium, long horizon
+    N_LAG = 12  # len(LAG_INDICES) * len(LAG_WINDOWS)
+    LAG_COLS = [
+        f"{name}_diff{k}"
+        for name in ["p0", "p6", "v0", "dp0"]
+        for k in [1, 4, 16]
+    ]
+
+    @staticmethod
+    def compute_batch(features: np.ndarray) -> np.ndarray:
+        """Compute lag-diff features for full sequences (training).
+
+        Args:
+            features: (n_seqs, seq_len, >=32) — raw features must be in first 32 cols
+        Returns:
+            (n_seqs, seq_len, 12) lag-diff features
+        """
+        n_seqs, seq_len, _ = features.shape
+        result = np.zeros((n_seqs, seq_len, LagFeatureBuilder.N_LAG), dtype=np.float32)
+        idx = 0
+        for feat_idx in LagFeatureBuilder.LAG_INDICES:
+            col = features[:, :, feat_idx]  # (n_seqs, seq_len)
+            for lag in LagFeatureBuilder.LAG_WINDOWS:
+                if lag < seq_len:
+                    result[:, lag:, idx] = col[:, lag:] - col[:, :-lag]
+                idx += 1
+        return result
+
+
+class LagBuffer:
+    """Stateful lag feature computation for online inference."""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.history: list = []
+
+    def compute_step(self, features: np.ndarray) -> np.ndarray:
+        """Compute lag-diff features for a single step.
+
+        Args:
+            features: (>=32,) current features (raw cols in first 32)
+        Returns:
+            Input with 12 lag-diff columns appended
+        """
+        current = np.array([features[i] for i in LagFeatureBuilder.LAG_INDICES], dtype=np.float32)
+        self.history.append(current)
+        t = len(self.history) - 1
+
+        lags = np.zeros(LagFeatureBuilder.N_LAG, dtype=np.float32)
+        idx = 0
+        for i in range(len(LagFeatureBuilder.LAG_INDICES)):
+            for lag in LagFeatureBuilder.LAG_WINDOWS:
+                if t >= lag:
+                    lags[idx] = self.history[t][i] - self.history[t - lag][i]
+                idx += 1
+        return np.concatenate([features, lags]).astype(np.float32)
+
+
 class Normalizer:
     """Z-score normalizer."""
 
