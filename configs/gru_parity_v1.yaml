@@ -1,0 +1,60 @@
+# PARITY AUDIT: Match official baseline architecture as closely as possible
+# Official baseline: plain 3-layer GRU h=64, raw 32 features, no normalization,
+# linear output, scores 0.2761 LB with val=0.2595 (+0.017 POSITIVE gap)
+#
+# Our baseline_match (same h=64 3L but with input_proj+LayerNorm+MLP+derived+zscore):
+# val=0.2738, LB=0.2394 (-0.034 gap). CATASTROPHIC.
+#
+# Hypothesis: our pipeline's extra complexity CAUSES overfitting.
+# The baseline's simplicity IS the regularization.
+#
+# This config strips EVERYTHING:
+# - vanilla: true (no input projection, no LayerNorm, no input dropout)
+# - output_type: linear (no MLP output head)
+# - raw 32 features (no derived)
+# - no z-score normalization
+# - dropout: 0 (official baseline has no dropout)
+# - MSE loss (simplest possible)
+#
+# Kill test: 3 seeds. SUCCESS = val-LB gap closer to 0 (or positive).
+# Val might be LOWER than tightwd_v2 — that's OK if generalization improves.
+
+model:
+  type: gru
+  input_size: 32
+  hidden_size: 64
+  num_layers: 3
+  dropout: 0.0
+  output_size: 2
+  vanilla: true
+  output_type: linear
+
+training:
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.0
+  epochs: 50
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 12
+  loss: mse
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 5
+    min_lr: 1e-6
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: false
+  derived_features: false
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5

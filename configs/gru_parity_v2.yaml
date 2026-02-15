@@ -1,0 +1,48 @@
+# PARITY AUDIT v2: Vanilla GRU + our best recipe (derived features + z-score + combined loss)
+# This isolates the ARCHITECTURE question:
+# - v1 (full parity): raw32, no norm, MSE, vanilla+linear → tests full baseline match
+# - v2 (this): derived42, z-score, combined loss, vanilla+linear → tests if input_proj+MLP hurts
+#
+# If v2 val > tightwd_v2 val: input_proj + MLP was hurting us
+# If v2 val ~ tightwd_v2 val: architecture doesn't matter, recipe matters
+# If v2 val < tightwd_v2 val: input_proj helps on val (but maybe hurts generalization)
+
+model:
+  type: gru
+  input_size: 42
+  hidden_size: 64
+  num_layers: 3
+  dropout: 0.0
+  output_size: 2
+  vanilla: true
+  output_type: linear
+
+training:
+  lr: 0.0008
+  weight_decay: 5e-5
+  epochs: 35
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 8
+  loss: combined
+  weighted_ratio: 0.62
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 3
+    min_lr: 1e-6
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: true
+  derived_features: true
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5
