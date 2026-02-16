@@ -25,6 +25,29 @@ class MaskedMSELoss(nn.Module):
         return torch.nn.functional.mse_loss(predictions, targets)
 
 
+class MaskedHuberLoss(nn.Module):
+    """Plain Huber loss with mask support. No amplitude weighting.
+
+    Unlike HuberWeightedLoss which weights by |target|, this uses uniform weighting.
+    Huber is quadratic for |error| < delta, linear for |error| >= delta.
+    This changes the error shape vs MSE, producing different prediction distributions.
+    """
+
+    def __init__(self, delta: float = 1.0):
+        super().__init__()
+        self.delta = delta
+
+    def forward(self, predictions: torch.Tensor, targets: torch.Tensor,
+                mask: Optional[torch.Tensor] = None, **kwargs) -> torch.Tensor:
+        if mask is not None:
+            mask_3d = mask.unsqueeze(-1).expand_as(predictions)
+            return torch.nn.functional.huber_loss(
+                predictions[mask_3d], targets[mask_3d],
+                reduction='mean', delta=self.delta)
+        return torch.nn.functional.huber_loss(
+            predictions, targets, reduction='mean', delta=self.delta)
+
+
 def get_loss_function(config: dict) -> nn.Module:
     """Factory function for loss functions.
 
@@ -42,6 +65,9 @@ def get_loss_function(config: dict) -> nn.Module:
 
     if loss_type == 'mse':
         loss_fn = MaskedMSELoss()
+    elif loss_type == 'masked_huber':
+        delta = training_cfg.get('huber_delta', 1.0)
+        loss_fn = MaskedHuberLoss(delta=delta)
     elif loss_type == 'weighted_mse':
         loss_fn = WeightedMSELoss(target_weights=target_weights)
     elif loss_type == 'combined':

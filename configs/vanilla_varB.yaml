@@ -1,0 +1,42 @@
+# Variant B: Cosine schedule — different LR trajectory changes optimization landscape
+# Base (gru_parity_v1): LR=0.001, ReduceOnPlateau(factor=0.5, patience=5)
+# Changes: higher LR with cosine annealing + warmup (no staircase decay)
+
+model:
+  type: gru
+  input_size: 32
+  hidden_size: 64
+  num_layers: 3
+  dropout: 0.0
+  output_size: 2
+  vanilla: true
+  output_type: linear
+
+training:
+  optimizer: adamw
+  lr: 0.002
+  weight_decay: 0.0
+  epochs: 50
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 12
+  loss: mse
+  use_amp: true
+  scheduler:
+    type: cosine_warmup
+    warmup_fraction: 0.1
+    min_lr: 5.0e-5
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: false
+  derived_features: false
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5
