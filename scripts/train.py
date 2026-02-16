@@ -111,6 +111,7 @@ def main():
     microstructure_features = data_cfg.get('microstructure_features', False)
     lag_features = data_cfg.get('lag_features', False)
     revin = data_cfg.get('revin', False)
+    subsample_ratio = float(data_cfg.get('subsample_ratio', 1.0))
     feature_dim = 32
     if derived_features:
         feature_dim += 10
@@ -167,6 +168,7 @@ def main():
             lag_features=lag_features,
             window_size=window_size,
             revin=revin,
+            subsample_ratio=subsample_ratio,
         )
         print(f"Train batches: {len(train_loader)}, Valid batches: {len(valid_loader)}")
 

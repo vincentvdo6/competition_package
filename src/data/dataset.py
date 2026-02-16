@@ -46,6 +46,7 @@ class LOBSequenceDataset(Dataset):
         microstructure_features: bool = False,
         lag_features: bool = False,
         revin = False,  # False, True/'full' (full-sequence), or 'causal' (running stats)
+        subsample_ratio: float = 1.0,  # Bagging: fraction of sequences to keep (e.g. 0.85)
     ):
         self.derived_features = derived_features
         self.temporal_features = temporal_features and derived_features  # temporal requires derived
@@ -54,6 +55,15 @@ class LOBSequenceDataset(Dataset):
         self.lag_features = lag_features
         self.df = pd.read_parquet(parquet_path)
         self.seq_ids = np.sort(self.df['seq_ix'].unique())
+
+        # Bagging: randomly subsample sequences (uses globally-seeded numpy RNG)
+        if 0 < subsample_ratio < 1.0:
+            n_total = len(self.seq_ids)
+            n_keep = max(1, int(n_total * subsample_ratio))
+            self.seq_ids = np.sort(np.random.choice(self.seq_ids, size=n_keep, replace=False))
+            self.df = self.df[self.df['seq_ix'].isin(self.seq_ids)]
+            print(f"  Bagging: kept {n_keep}/{n_total} sequences ({subsample_ratio*100:.0f}%)")
+
         n_seqs = len(self.seq_ids)
 
         n_base = 32 + (DerivedFeatureBuilder.N_DERIVED if derived_features else 0)
@@ -200,12 +210,14 @@ def create_dataloaders(
     lag_features: bool = False,
     window_size: int = 0,
     revin = False,
+    subsample_ratio: float = 1.0,
 ) -> Tuple[DataLoader, DataLoader, Optional[Normalizer]]:
     """Create train and validation dataloaders with shared normalizer.
 
     Args:
         window_size: If >0, wrap train dataset in WindowedDataset (random crops).
                      Validation always uses full sequences for fair comparison.
+        subsample_ratio: Fraction of train sequences to keep (bagging). Only applies to train.
     """
     train_dataset = LOBSequenceDataset(
         train_path, normalize=normalize, derived_features=derived_features,
@@ -214,6 +226,7 @@ def create_dataloaders(
         microstructure_features=microstructure_features,
         lag_features=lag_features,
         revin=revin,
+        subsample_ratio=subsample_ratio,
     )
 
     valid_dataset = LOBSequenceDataset(
