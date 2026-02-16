@@ -1,7 +1,8 @@
-"""Build a submission zip for vanilla GRU ensemble (multiple seeds, uniform weights).
+"""Build a submission zip for vanilla RNN ensemble (GRU or LSTM, multiple seeds).
 
 Supports both PyTorch and ONNX inference modes:
   --onnx: Export to ONNX for ~2.5x faster inference (fit 20+ models in budget)
+  --rnn-type: gru (default) or lstm
 """
 
 import argparse
@@ -61,6 +62,58 @@ def _export_vanilla_to_onnx(ckpt_path, hidden_size, num_layers, onnx_path):
         onnx_path,
         input_names=["input", "hidden_in"],
         output_names=["prediction", "hidden_out"],
+        dynamic_axes=None,
+        opset_version=17,
+        do_constant_folding=True,
+    )
+
+
+class VanillaLSTMStep(nn.Module):
+    """Minimal wrapper for ONNX export: raw features -> LSTM -> linear."""
+
+    def __init__(self, lstm, fc):
+        super().__init__()
+        self.lstm = lstm
+        self.fc = fc
+
+    def forward(self, x: torch.Tensor, h_in: torch.Tensor, c_in: torch.Tensor):
+        x = x.unsqueeze(1)  # (1, input_size) -> (1, 1, input_size)
+        out, (h_out, c_out) = self.lstm(x, (h_in, c_in))
+        return self.fc(out.squeeze(1)), h_out, c_out
+
+
+def _export_vanilla_lstm_to_onnx(ckpt_path, hidden_size, num_layers, onnx_path):
+    """Export a vanilla LSTM checkpoint to ONNX for step-by-step inference."""
+    from torch.nn import LSTM, Linear
+
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    state_dict = ckpt["model_state_dict"]
+
+    lstm = LSTM(input_size=32, hidden_size=hidden_size, num_layers=num_layers,
+                batch_first=True, dropout=0.0, bidirectional=False)
+    fc = Linear(hidden_size, 2)
+
+    lstm_sd = {k.replace("lstm.", ""): v for k, v in state_dict.items() if k.startswith("lstm.")}
+    fc_sd = {}
+    for k, v in state_dict.items():
+        if k.startswith("output_proj."):
+            fc_sd[k.replace("output_proj.", "")] = v
+    lstm.load_state_dict(lstm_sd)
+    fc.load_state_dict(fc_sd)
+
+    wrapper = VanillaLSTMStep(lstm, fc)
+    wrapper.eval()
+
+    dummy_x = torch.randn(1, 32)
+    dummy_h = torch.zeros(num_layers, 1, hidden_size)
+    dummy_c = torch.zeros(num_layers, 1, hidden_size)
+
+    torch.onnx.export(
+        wrapper,
+        (dummy_x, dummy_h, dummy_c),
+        onnx_path,
+        input_names=["input", "h_in", "c_in"],
+        output_names=["prediction", "h_out", "c_out"],
         dynamic_axes=None,
         opset_version=17,
         do_constant_folding=True,
@@ -246,6 +299,190 @@ class PredictionModel:
 '''
 
 
+# ---------------------------------------------------------------------------
+# LSTM solution templates
+# ---------------------------------------------------------------------------
+SOLUTION_TEMPLATE_LSTM = '''"""Vanilla LSTM ensemble: {n_models} models, raw 32 features, no normalization."""
+
+import os
+import numpy as np
+import torch
+import torch.nn as nn
+
+
+class VanillaLSTM(nn.Module):
+    def __init__(self, input_size=32, hidden_size=64, num_layers=3, output_size=2):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=0.0,
+            bidirectional=False,
+        )
+        self.fc = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x, hidden=None):
+        output, hidden = self.lstm(x, hidden)
+        predictions = self.fc(output)
+        return predictions, hidden
+
+    def init_hidden(self, batch_size=1):
+        h0 = torch.zeros(self.num_layers, batch_size, self.hidden_size)
+        c0 = torch.zeros(self.num_layers, batch_size, self.hidden_size)
+        return (h0, c0)
+
+
+# Model configs: (filename, hidden_size, num_layers, weight)
+MODEL_CONFIGS = {model_configs}
+
+
+class PredictionModel:
+    def __init__(self, model_path=""):
+        self.device = torch.device("cpu")
+        torch.set_num_threads(1)
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+        self.models = []
+        self.hiddens = []
+        self.weights = []
+
+        for filename, h, nl, w in MODEL_CONFIGS:
+            ckpt = torch.load(
+                os.path.join(base_dir, filename),
+                map_location="cpu",
+                weights_only=False,
+            )
+            state_dict = ckpt["model_state_dict"]
+
+            model = VanillaLSTM(input_size=32, hidden_size=h, num_layers=nl)
+
+            # Filter state_dict keys
+            filtered = {{}}
+            for k, v in state_dict.items():
+                if k.startswith("lstm."):
+                    filtered[k] = v
+                elif k.startswith("output_proj."):
+                    new_key = k.replace("output_proj.", "fc.")
+                    filtered[new_key] = v
+            model.load_state_dict(filtered)
+            model.eval()
+
+            self.models.append(model)
+            self.hiddens.append(model.init_hidden(1))
+            self.weights.append(w)
+
+        # Normalize weights
+        total_w = sum(self.weights)
+        self.weights = [w / total_w for w in self.weights]
+
+        self.prev_seq_ix = None
+
+    @torch.no_grad()
+    def predict(self, data_point) -> np.ndarray:
+        seq_ix = data_point.seq_ix
+        if seq_ix != self.prev_seq_ix:
+            self.hiddens = [m.init_hidden(1) for m in self.models]
+            self.prev_seq_ix = seq_ix
+
+        features = data_point.state.astype(np.float32)[:32]
+        x = torch.from_numpy(features).unsqueeze(0).unsqueeze(0)
+
+        pred_sum = np.zeros(2, dtype=np.float32)
+        for i, model in enumerate(self.models):
+            pred, self.hiddens[i] = model(x, self.hiddens[i])
+            pred_sum += self.weights[i] * pred.squeeze().numpy()
+
+        if not data_point.need_prediction:
+            return None
+        return pred_sum.clip(-6, 6)
+'''
+
+
+SOLUTION_TEMPLATE_LSTM_ONNX = '''"""Vanilla LSTM ONNX ensemble: {n_models} models, raw 32 features, no normalization."""
+
+import os
+import numpy as np
+import onnxruntime as ort
+
+
+# Model configs: (filename, hidden_size, num_layers, weight)
+MODEL_CONFIGS = {model_configs}
+
+
+class OnnxVanillaLSTM:
+    """ONNX Runtime LSTM for step-by-step inference."""
+
+    def __init__(self, onnx_path, hidden_size, num_layers):
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 1
+        opts.inter_op_num_threads = 1
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        self.sess = ort.InferenceSession(
+            onnx_path, opts, providers=["CPUExecutionProvider"]
+        )
+
+    def init_hidden(self):
+        h = np.zeros((self.num_layers, 1, self.hidden_size), dtype=np.float32)
+        c = np.zeros((self.num_layers, 1, self.hidden_size), dtype=np.float32)
+        return (h, c)
+
+    def run_step(self, x_np, hidden):
+        h_in, c_in = hidden
+        pred, h_out, c_out = self.sess.run(
+            ["prediction", "h_out", "c_out"],
+            {{"input": x_np, "h_in": h_in, "c_in": c_in}},
+        )
+        return pred[0], (h_out, c_out)
+
+
+class PredictionModel:
+    def __init__(self, model_path=""):
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+        self.models = []
+        self.hiddens = []
+        self.weights = []
+
+        for filename, h, nl, w in MODEL_CONFIGS:
+            model = OnnxVanillaLSTM(
+                os.path.join(base_dir, filename), h, nl
+            )
+            self.models.append(model)
+            self.hiddens.append(model.init_hidden())
+            self.weights.append(w)
+
+        # Normalize weights
+        total_w = sum(self.weights)
+        self.weights = np.array([w / total_w for w in self.weights], dtype=np.float32)
+
+        self.prev_seq_ix = None
+
+    def predict(self, data_point) -> np.ndarray:
+        seq_ix = data_point.seq_ix
+        if seq_ix != self.prev_seq_ix:
+            self.hiddens = [m.init_hidden() for m in self.models]
+            self.prev_seq_ix = seq_ix
+
+        features = data_point.state.astype(np.float32)[:32].reshape(1, -1)
+
+        pred_sum = np.zeros(2, dtype=np.float32)
+        for i, model in enumerate(self.models):
+            pred, self.hiddens[i] = model.run_step(features, self.hiddens[i])
+            pred_sum += self.weights[i] * pred
+
+        if not data_point.need_prediction:
+            return None
+        return pred_sum.clip(-6, 6)
+'''
+
+
 def main():
     parser = argparse.ArgumentParser(description="Build vanilla GRU ensemble submission")
     parser.add_argument("--checkpoints", nargs="+", required=True,
@@ -260,6 +497,8 @@ def main():
                         help="Output zip path")
     parser.add_argument("--onnx", action="store_true",
                         help="Export models to ONNX for ~2.5x faster inference")
+    parser.add_argument("--rnn-type", choices=["gru", "lstm"], default="gru",
+                        help="RNN type: gru (default) or lstm")
     args = parser.parse_args()
 
     n_models = len(args.checkpoints)
@@ -268,8 +507,9 @@ def main():
         raise ValueError(f"Got {len(weights)} weights for {n_models} models")
 
     mode = "ONNX" if args.onnx else "PyTorch"
-    print(f"Building vanilla ensemble: {n_models} models ({mode})")
-    print(f"Architecture: h={args.hidden_size}, L={args.num_layers}")
+    rnn_label = args.rnn_type.upper()
+    print(f"Building vanilla {rnn_label} ensemble: {n_models} models ({mode})")
+    print(f"Architecture: {rnn_label} h={args.hidden_size}, L={args.num_layers}")
 
     # Load and validate checkpoints
     ext = ".onnx" if args.onnx else ".pt"
@@ -292,8 +532,11 @@ def main():
 
     # Build zip
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Write solution.py
-        template = SOLUTION_TEMPLATE_ONNX if args.onnx else SOLUTION_TEMPLATE
+        # Write solution.py — select template based on rnn_type and onnx
+        if args.rnn_type == 'lstm':
+            template = SOLUTION_TEMPLATE_LSTM_ONNX if args.onnx else SOLUTION_TEMPLATE_LSTM
+        else:
+            template = SOLUTION_TEMPLATE_ONNX if args.onnx else SOLUTION_TEMPLATE
         solution_code = template.format(
             n_models=n_models,
             model_configs=repr(model_configs),
@@ -306,9 +549,14 @@ def main():
             if args.onnx:
                 onnx_path = os.path.join(tmpdir, f"model_{i}.onnx")
                 print(f"  Exporting model_{i}.onnx ...", end=" ", flush=True)
-                _export_vanilla_to_onnx(
-                    ckpt_path, args.hidden_size, args.num_layers, onnx_path
-                )
+                if args.rnn_type == 'lstm':
+                    _export_vanilla_lstm_to_onnx(
+                        ckpt_path, args.hidden_size, args.num_layers, onnx_path
+                    )
+                else:
+                    _export_vanilla_to_onnx(
+                        ckpt_path, args.hidden_size, args.num_layers, onnx_path
+                    )
                 size_kb = os.path.getsize(onnx_path) / 1024
                 print(f"({size_kb:.0f}KB)")
             else:

@@ -37,6 +37,7 @@ class GRUBaseline(BaseModel):
         self.dropout = model_cfg.get('dropout', 0.2)
         self.output_size = model_cfg.get('output_size', 2)
         self.vanilla = model_cfg.get('vanilla', False)
+        self.rnn_type = model_cfg.get('rnn_type', 'gru')
 
         # CVML block: learnable nonlinear feature mixing with residual
         self.use_cvml = model_cfg.get('cvml', False)
@@ -71,15 +72,26 @@ class GRUBaseline(BaseModel):
         else:
             gru_input_size = self.input_size
 
-        # GRU layers
-        self.gru = nn.GRU(
-            input_size=gru_input_size,
-            hidden_size=self.hidden_size,
-            num_layers=self.num_layers,
-            batch_first=True,
-            dropout=self.dropout if self.num_layers > 1 else 0.0,
-            bidirectional=False
-        )
+        # RNN layers (GRU or LSTM — separate attributes for checkpoint compatibility)
+        rnn_dropout = self.dropout if self.num_layers > 1 else 0.0
+        if self.rnn_type == 'lstm':
+            self.lstm = nn.LSTM(
+                input_size=gru_input_size,
+                hidden_size=self.hidden_size,
+                num_layers=self.num_layers,
+                batch_first=True,
+                dropout=rnn_dropout,
+                bidirectional=False
+            )
+        else:
+            self.gru = nn.GRU(
+                input_size=gru_input_size,
+                hidden_size=self.hidden_size,
+                num_layers=self.num_layers,
+                batch_first=True,
+                dropout=rnn_dropout,
+                bidirectional=False
+            )
         
         # Output projection
         output_type = model_cfg.get('output_type', 'mlp')
@@ -101,7 +113,8 @@ class GRUBaseline(BaseModel):
             self.aux_sign_t1 = nn.Linear(self.hidden_size, 1)
 
         # Chrono initialization for GRU gates (biases update gate toward persistence)
-        if model_cfg.get('chrono_init', False):
+        # Only applicable to GRU — LSTM has different gate structure
+        if model_cfg.get('chrono_init', False) and self.rnn_type == 'gru':
             max_period = model_cfg.get('chrono_max_period', 100)
             self._apply_chrono_init(max_period)
     
@@ -147,7 +160,10 @@ class GRUBaseline(BaseModel):
 
         if hidden is None:
             hidden = self.init_hidden(batch_size)
-            hidden = hidden.to(x.device)
+            if self.rnn_type == 'lstm':
+                hidden = (hidden[0].to(x.device), hidden[1].to(x.device))
+            else:
+                hidden = hidden.to(x.device)
 
         # CVML: learnable feature mixing (residual)
         if self.use_cvml:
@@ -162,34 +178,38 @@ class GRUBaseline(BaseModel):
             x = self.input_norm(x)
             x = self.input_dropout(x)
 
-        gru_out, new_hidden = self.gru(x, hidden)
+        if self.rnn_type == 'lstm':
+            rnn_out, new_hidden = self.lstm(x, hidden)
+        else:
+            rnn_out, new_hidden = self.gru(x, hidden)
 
-        predictions = self.output_proj(gru_out)
+        predictions = self.output_proj(rnn_out)
 
         if return_aux and self.has_aux_heads:
             aux = {
-                'delta': self.aux_delta(gru_out),
-                'sign_t0': self.aux_sign_t0(gru_out),
-                'sign_t1': self.aux_sign_t1(gru_out),
+                'delta': self.aux_delta(rnn_out),
+                'sign_t0': self.aux_sign_t0(rnn_out),
+                'sign_t1': self.aux_sign_t1(rnn_out),
             }
             return predictions, new_hidden, aux
 
         return predictions, new_hidden
     
-    def init_hidden(self, batch_size: int) -> torch.Tensor:
+    def init_hidden(self, batch_size: int):
         """Initialize hidden state with zeros.
-        
+
         Args:
             batch_size: Batch size
-        
+
         Returns:
-            Hidden state of shape (num_layers, batch_size, hidden_size)
+            GRU: Tensor of shape (num_layers, batch_size, hidden_size)
+            LSTM: Tuple of (h0, c0), each (num_layers, batch_size, hidden_size)
         """
-        return torch.zeros(
-            self.num_layers,
-            batch_size,
-            self.hidden_size
-        )
+        h0 = torch.zeros(self.num_layers, batch_size, self.hidden_size)
+        if self.rnn_type == 'lstm':
+            c0 = torch.zeros(self.num_layers, batch_size, self.hidden_size)
+            return (h0, c0)
+        return h0
     
     def forward_step(
         self, 

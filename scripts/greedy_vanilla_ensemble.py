@@ -45,7 +45,7 @@ from utils import weighted_pearson_correlation
 # Model loading
 # ---------------------------------------------------------------------------
 def load_vanilla_model(ckpt_path):
-    """Load vanilla GRU from checkpoint, return (gru, fc, best_score, best_epoch)."""
+    """Load vanilla RNN (GRU or LSTM) from checkpoint, return (rnn, fc, best_score, best_epoch)."""
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     config = ckpt.get("config", {})
     model_cfg = config.get("model", {})
@@ -53,32 +53,42 @@ def load_vanilla_model(ckpt_path):
     h = model_cfg.get("hidden_size", 64)
     nl = model_cfg.get("num_layers", 3)
     inp = model_cfg.get("input_size", 32)
-
-    gru = nn.GRU(input_size=inp, hidden_size=h, num_layers=nl,
-                  batch_first=True, dropout=0.0, bidirectional=False)
-    fc = nn.Linear(h, 2)
+    rnn_type = model_cfg.get("rnn_type", "gru")
 
     state_dict = ckpt["model_state_dict"]
-    gru_sd = {k.replace("gru.", ""): v for k, v in state_dict.items()
-              if k.startswith("gru.")}
+
+    if rnn_type == "lstm":
+        rnn = nn.LSTM(input_size=inp, hidden_size=h, num_layers=nl,
+                      batch_first=True, dropout=0.0, bidirectional=False)
+        rnn_sd = {k.replace("lstm.", ""): v for k, v in state_dict.items()
+                  if k.startswith("lstm.")}
+        rnn.load_state_dict(rnn_sd)
+    else:
+        rnn = nn.GRU(input_size=inp, hidden_size=h, num_layers=nl,
+                     batch_first=True, dropout=0.0, bidirectional=False)
+        rnn_sd = {k.replace("gru.", ""): v for k, v in state_dict.items()
+                  if k.startswith("gru.")}
+        rnn.load_state_dict(rnn_sd)
+
+    fc = nn.Linear(h, 2)
     fc_sd = {k.replace("output_proj.", ""): v for k, v in state_dict.items()
              if k.startswith("output_proj.")}
-    gru.load_state_dict(gru_sd)
     fc.load_state_dict(fc_sd)
 
-    return gru, fc, ckpt.get("best_score", 0), ckpt.get("best_epoch", 0)
+    return rnn, fc, ckpt.get("best_score", 0), ckpt.get("best_epoch", 0)
 
 
 # ---------------------------------------------------------------------------
 # Batch inference (per-sequence, matching online inference behavior)
 # ---------------------------------------------------------------------------
-def batch_inference(gru, fc, df):
+def batch_inference(rnn, fc, df):
     """Run per-sequence forward pass on validation data.
 
+    Works with both GRU and LSTM (passing None auto-initializes hidden state).
     Returns (preds, targets) arrays filtered to need_prediction=True rows.
     Each sequence gets fresh hidden state, matching online inference.
     """
-    gru.eval()
+    rnn.eval()
     fc.eval()
 
     values = df.values
@@ -99,7 +109,7 @@ def batch_inference(gru, fc, df):
 
         x = torch.from_numpy(seq_features).unsqueeze(0)  # (1, seq_len, 32)
         with torch.no_grad():
-            out, _ = gru(x, None)
+            out, _ = rnn(x, None)
             preds = fc(out).squeeze(0).numpy()  # (seq_len, 2)
 
         preds = np.clip(preds, -6.0, 6.0)
@@ -148,8 +158,8 @@ def cmd_cache(args):
 
         print(f"  {basename}: inferring...", end=" ", flush=True)
         t0 = time.time()
-        gru, fc, best_score, best_epoch = load_vanilla_model(ckpt_path)
-        preds, targets = batch_inference(gru, fc, df)
+        rnn, fc, best_score, best_epoch = load_vanilla_model(ckpt_path)
+        preds, targets = batch_inference(rnn, fc, df)
         avg, s_t0, s_t1 = score_predictions(preds, targets)
         elapsed = time.time() - t0
 
