@@ -146,8 +146,8 @@ def cmd_cache(args):
 
     for ckpt_path in args.checkpoints:
         basename = Path(ckpt_path).stem
-        # Skip epoch checkpoints
-        if "_epoch" in basename:
+        # Skip epoch checkpoints unless --include-epochs
+        if "_epoch" in basename and not getattr(args, 'include_epochs', False):
             print(f"  Skipping epoch checkpoint: {basename}")
             continue
 
@@ -277,8 +277,9 @@ def cmd_greedy(args):
     for i, name in enumerate(selected, 1):
         print(f"  {i}. {name}")
 
-    # Count recipe diversity
+    # Count recipe and checkpoint type diversity
     recipes = {}
+    ckpt_types = {"best": 0, "epoch": 0}
     for name in selected:
         if "parity_v1" in name:
             recipe = "base"
@@ -291,11 +292,18 @@ def cmd_greedy(args):
         else:
             recipe = "other"
         recipes[recipe] = recipes.get(recipe, 0) + 1
+        if "_epoch" in name:
+            ckpt_types["epoch"] += 1
+        else:
+            ckpt_types["best"] += 1
 
     print(f"\nRecipe breakdown:")
     for recipe, count in sorted(recipes.items()):
         pct = count / len(selected) * 100
         print(f"  {recipe}: {count} ({pct:.0f}%)")
+    if ckpt_types["epoch"] > 0:
+        print(f"\nCheckpoint type breakdown:")
+        print(f"  best: {ckpt_types['best']}, epoch: {ckpt_types['epoch']}")
 
 
 def cmd_diversity(args):
@@ -383,6 +391,8 @@ def main():
                          help="Directory for cached .npz files")
     p_cache.add_argument("--force", action="store_true",
                          help="Overwrite existing cache files")
+    p_cache.add_argument("--include-epochs", action="store_true",
+                         help="Include epoch checkpoints (normally skipped)")
 
     # greedy
     p_greedy = subparsers.add_parser("greedy", help="Greedy forward selection")

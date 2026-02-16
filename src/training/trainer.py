@@ -245,8 +245,9 @@ class Trainer:
         else:
             self.ema = None
 
-        # Periodic checkpoint saving (for checkpoint averaging)
+        # Periodic checkpoint saving (for checkpoint averaging / diversity)
         self.save_every = int(config.get('logging', {}).get('save_every', 0))
+        self.save_after_epoch = int(config.get('logging', {}).get('save_after_epoch', 0))
 
         # Logging
         log_cfg = config.get('logging', {})
@@ -717,7 +718,10 @@ class Trainer:
         }, path)
 
     def _save_epoch_checkpoint(self, epoch: int, use_ema: bool = False) -> None:
-        """Save lightweight checkpoint for later averaging (model weights only)."""
+        """Save epoch checkpoint with full metadata for ensemble diversity."""
+        if epoch < self.save_after_epoch:
+            return
+
         prefix = self.config.get('logging', {}).get('checkpoint_prefix', 'model')
 
         if use_ema and self.ema is not None:
@@ -728,7 +732,12 @@ class Trainer:
             state_dict = self.model.state_dict()
 
         path = os.path.join(self.log_dir, f"{prefix}_epoch{epoch}.pt")
-        torch.save({'model_state_dict': state_dict}, path)
+        torch.save({
+            'model_state_dict': state_dict,
+            'config': self.config,
+            'best_score': self.best_score,
+            'best_epoch': epoch,
+        }, path)
 
     def _log_experiment(self, history: Dict) -> None:
         """Append experiment to JSONL log.
