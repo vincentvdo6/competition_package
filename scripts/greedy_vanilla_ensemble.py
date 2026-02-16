@@ -156,6 +156,15 @@ def cmd_cache(args):
             print(f"  {basename}: cached (skip)")
             continue
 
+        # Skip models with incompatible input_size (e.g. parity_v2 has 42 features)
+        ckpt_tmp = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        inp_size = ckpt_tmp.get("config", {}).get("model", {}).get("input_size", 32)
+        if inp_size != 32:
+            print(f"  {basename}: SKIP (input_size={inp_size}, need 32)")
+            del ckpt_tmp
+            continue
+        del ckpt_tmp
+
         print(f"  {basename}: inferring...", end=" ", flush=True)
         t0 = time.time()
         rnn, fc, best_score, best_epoch = load_vanilla_model(ckpt_path)
