@@ -1,0 +1,47 @@
+# Vanilla GRU + Pearson-blended loss
+# Same architecture as gru_parity_v1 (h=64, raw32, no norm, linear output)
+# but replaces MSE with a 70% MSE + 30% Pearson blend.
+# Pearson component directly optimizes the competition metric (correlation).
+# Should generalize to any test set since metric IS correlation.
+
+model:
+  type: gru
+  input_size: 32
+  hidden_size: 64
+  num_layers: 3
+  dropout: 0.0
+  output_size: 2
+  vanilla: true
+  output_type: linear
+
+training:
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.0
+  epochs: 50
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 12
+  loss: pearson_combined
+  pearson_alpha: 0.7
+  weighted_ratio: 0.5
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 5
+    min_lr: 1e-6
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: false
+  derived_features: false
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 0
