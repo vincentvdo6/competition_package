@@ -97,13 +97,14 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 
 ---
 
-## Current State (as of 2026-02-16)
+## Current State (as of 2026-02-17)
 
-### Vanilla GRU Paradigm (Feb 14) + ALL Diversity Exhausted (Feb 16)
-- **Parity audit** revealed: our complex pipeline (input_proj+LayerNorm+MLP+derived+zscore) HURTS generalization
-- **Vanilla GRU** (plain GRU + linear output, raw 32 features, no norm, MSE loss) has POSITIVE val-to-LB gap
+### STATUS: RECIPE-LEVEL SATURATION — STUCK IN LOCAL BASIN
 - **Current best**: vanilla_ens10 = **0.2885 LB, Rank 73/4728** (PAST TOP 100!)
-- **ALL diversity/modification strategies exhausted** — need fundamentally new approaches
+- **Vanilla GRU** (plain GRU + linear output, raw 32 features, no norm, MSE loss) has POSITIVE val-to-LB gap
+- **EVERY modification to vanilla recipe has been tested and killed or neutral** (see full list below)
+- **Gap to top-1 (0.3240) is +0.035** — not a tweak, requires fundamentally different approach
+- **Codex verdict (Feb 17)**: "yes, you're likely stuck in this local basin"
 
 ### Key LB Scores (43 submissions total)
 | Submission | Score | Duration | Gap | Notes |
@@ -146,24 +147,18 @@ Every diversity and modification strategy has been tested and confirmed negative
 
 **Architecture**: input_proj, LayerNorm, MLP output, attention, TCN, transformer, CVML, SE-Net gate, LSTM
 **Features**: derived 42, microstructure, lag diffs, z-score, RevIN (full+causal)
-**Loss**: Pearson blend, Huber, PearsonPrimary, aux heads, recency weighting
-**Training**: full-data, stronger reg, SAM, EMA, cosine warmup, Adam, higher LR, bagging
+**Loss**: Pearson blend, Huber, PearsonPrimary, aux heads, recency weighting, innovation aux head
+**Training**: full-data, stronger reg, SAM, EMA, cosine warmup, Adam, higher LR, bagging, Mixup augmentation
 **Scaling**: h=128/144/192/256 (all worse than h=64)
 **Ensemble diversity**: recipe variants (varA/B/C), LSTM, checkpoint epochs, greedy selection, Pearson blend mixing, 20 models
 **Inference**: windowed (same as step-by-step)
+**Distribution shift**: adversarial-weighted fine-tune on val-like 30% subset (zero-delta), tree model blend (decorrelated but too weak)
+**Post-processing**: prediction neutralization (signal IS linear, removing it destroys predictions)
 
-### Codex's 7 New Strategic Ideas (not yet started, need evaluation)
-1. **Regime-gated experts**: Train identical GRUs on different data regimes (volatility/spread/imbalance), use tiny gating model
-2. **Adversarial-validation density-ratio weighting**: Train classifier to detect train-vs-val shift, use as sample weights
-3. **Mega-teacher distillation**: Train 40-100 models offline, distill into 1-2 students
-4. **Tree model blend**: LightGBM/CatBoost on sequence summaries, blend if low correlation with GRU
-5. **Prediction neutralization**: Post-process to remove unstable exposures (regress out nuisance basis)
-6. **Variance-penalized stacking**: Optimize weights by `max(mean_fold_corr - beta * std_fold_corr)`
-7. **Chunk-wise inference calibration**: Per-sequence demeaning/winsorizing at test time
-
-### Awaiting Gemini Deep Research
-- Comprehensive context package created in `gemini_context/` with CONTEXT.md + all source files
-- Asking Gemini for fundamentally new approaches to break past 0.2885
+### Remaining Untried Ideas (Codex, Feb 17)
+1. **Regime-specialist ensemble + test-time gating** — highest EV but mixing has historically hurt
+2. **Self-supervised pretraining** (masked/next-step reconstruction) then fine-tune — genuinely untested
+3. **Massive candidate library (100+) + LB-aware blend** — contradicts our evidence (20=10, greedy=worse)
 
 ---
 
@@ -183,19 +178,32 @@ Every diversity and modification strategy has been tested and confirmed negative
 
 ### Key Source Files
 - `src/models/gru_baseline.py` — GRU model (vanilla mode: `vanilla: true` + `output_type: linear`)
-- `src/training/trainer.py` — Training loop (SAM optimizer added but KILLED)
+- `src/training/trainer.py` — Training loop (supports Mixup, SAM, innovation aux, all KILLED)
 - `src/training/losses.py` — MSE, Combined, Huber, WeightedPearson, PearsonCombined
 - `src/data/dataset.py` — PyTorch Dataset (supports `lag_features` flag, KILLED)
+
+### Analysis Scripts
+- `scripts/adversarial_validation.py` — Train/val distribution shift detection (AUC=0.959)
+- `scripts/tree_model_probe.py` — HistGradientBoosting probe + GRU correlation + blend sweep
+- `scripts/create_vallike_subset.py` — Create val-like train subset from adversarial weights
 
 ### KILLED Approaches (comprehensive — ALL tested and confirmed negative)
 - **Architecture**: input_proj, LayerNorm, MLP output, attention, TCN, transformer, CVML, SE-Net gate, LSTM
 - **Features**: derived 42, microstructure, lag diffs, raw32+zscore, raw32 no-norm (with complex arch)
-- **Loss**: PearsonPrimary, Pearson blend, Huber, aux heads, recency weighting, CVML+CoRe
-- **Training**: full-data, stronger reg, SAM, EMA, cosine warmup, Adam, higher LR, bagging (85%)
+- **Loss**: PearsonPrimary, Pearson blend, Huber, aux heads, recency weighting, CVML+CoRe, innovation aux head
+- **Training**: full-data, stronger reg, SAM, EMA, cosine warmup, Adam, higher LR, bagging (85%), Mixup (alpha=0.2, -0.0004 neutral)
 - **Normalization**: RevIN (full-seq and causal), z-score removal
 - **Scaling**: h=128/144/192/256 (all worse than h=64 on vanilla)
 - **Inference**: windowed (same as step-by-step on LB)
 - **Ensemble diversity**: 20 models (=10), greedy selection (WORSE), recipe variants (varA/B/C all worse), LSTM (-0.011), checkpoint epochs (useless), Pearson blend mixing (0.78 corr but WRONG direction on LB)
+- **Distribution shift**: val-like subset fine-tune (zero-delta), tree model blend (decorrelated but every alpha hurts)
+- **Post-processing**: prediction neutralization (signal IS linear relationship with features)
+
+### Key Discoveries (Feb 17)
+- **Adversarial validation AUC = 0.959**: train and val are almost perfectly separable. Massive distribution shift.
+- **Top discriminators**: v3_mean, p6_min, p0_min, p6_mean (level-based summary stats)
+- **97% of train seqs** get adversarial weight <0.5, only 72/10721 are "val-like"
+- **This explains everything**: why complex models overfit, why vanilla GRU generalizes, why positive val-LB gap exists
 
 ---
 
