@@ -1,0 +1,56 @@
+# Mixup augmentation on vanilla GRU (parity_v1 base)
+#
+# Only change from gru_parity_v1: add sequence-level Mixup during training.
+# Architecture, features, loss, and inference are IDENTICAL.
+#
+# Mixup settings (conservative per Codex recommendation):
+# - alpha=0.2 (Beta distribution, mostly near 0 or 1)
+# - prob=0.25 (25% of batches get mixup)
+# - anneal_off_pct=0.25 (last 25% of epochs: no mixup)
+#
+# Kill test: 3 seeds vs base parity_v1 mean (0.2689).
+
+model:
+  type: gru
+  input_size: 32
+  hidden_size: 64
+  num_layers: 3
+  dropout: 0.0
+  output_size: 2
+  vanilla: true
+  output_type: linear
+
+training:
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.0
+  epochs: 50
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 12
+  loss: mse
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 5
+    min_lr: 1e-6
+  mixup:
+    enabled: true
+    alpha: 0.2
+    prob: 0.25
+    anneal_off_pct: 0.25
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: false
+  derived_features: false
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5

@@ -69,6 +69,8 @@ def main():
                         help='Train on train+val combined (no validation)')
     parser.add_argument('--fixed-epochs', type=int, default=0,
                         help='Override epoch count (0 = use config). Used with --fulldata.')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Path to checkpoint to resume from (loads model weights only)')
     args = parser.parse_args()
 
     # Set seed
@@ -190,6 +192,14 @@ def main():
     model = get_model(config)
     param_count = model.count_parameters()
     print(f"Created {config.get('model', {}).get('type', 'gru').upper()} model with {param_count:,} parameters")
+
+    # Resume from checkpoint (load model weights only, fresh optimizer/scheduler)
+    if args.resume:
+        import torch as _torch
+        ckpt = _torch.load(args.resume, map_location='cpu', weights_only=False)
+        model.load_state_dict(ckpt['model_state_dict'], strict=False)
+        resume_score = ckpt.get('best_score', 'N/A')
+        print(f"Resumed model weights from {args.resume} (val={resume_score})")
 
     # Create loss function
     loss_fn = get_loss_function(config)

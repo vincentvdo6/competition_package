@@ -1,0 +1,57 @@
+# Stage 2: Fine-tune vanilla GRU on val-like training subset
+#
+# Uses top 30% of training sequences that most resemble the validation
+# distribution (identified by adversarial validation, AUC=0.959).
+#
+# Stage 1 (already done): normal gru_parity_v1 training on all 10,721 sequences.
+# Stage 2 (this config): fine-tune from Stage 1 checkpoint on ~3,216 val-like sequences.
+#
+# Key differences from gru_parity_v1:
+# - train_path: train_vallike30.parquet (filtered subset)
+# - LR: 5e-5 (20x lower, fine-tuning)
+# - epochs: 8 (short)
+# - early_stopping_patience: 2 (aggressive)
+# - scheduler patience: 1
+#
+# Usage: python scripts/train.py --config configs/gru_parity_v1_finetune.yaml \
+#          --seed 42 --resume logs/vanilla_all/gru_parity_v1_seed42.pt
+
+model:
+  type: gru
+  input_size: 32
+  hidden_size: 64
+  num_layers: 3
+  dropout: 0.0
+  output_size: 2
+  vanilla: true
+  output_type: linear
+
+training:
+  optimizer: adamw
+  lr: 0.00005
+  weight_decay: 0.0
+  epochs: 8
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 2
+  loss: mse
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 1
+    min_lr: 1e-6
+
+data:
+  train_path: datasets/train_vallike30.parquet
+  valid_path: datasets/valid.parquet
+  normalize: false
+  derived_features: false
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5

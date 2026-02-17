@@ -303,6 +303,17 @@ class Trainer:
             print(f"TBPTT: length={self.tbptt_len}, random_offset={self.tbptt_random_offset}",
                   flush=True)
 
+        # Mixup augmentation (sequence-level interpolation)
+        mixup_cfg = train_cfg.get('mixup', {})
+        self.mixup_enabled = bool(mixup_cfg.get('enabled', False))
+        if self.mixup_enabled:
+            self.mixup_alpha = float(mixup_cfg.get('alpha', 0.2))
+            self.mixup_prob = float(mixup_cfg.get('prob', 0.25))
+            self.mixup_anneal_off_pct = float(mixup_cfg.get('anneal_off_pct', 0.25))
+            print(f"Mixup: alpha={self.mixup_alpha}, prob={self.mixup_prob}, "
+                  f"anneal_off_pct={self.mixup_anneal_off_pct}", flush=True)
+        self.current_epoch = 0
+
         # Early stopping state
         self.best_score = -float('inf')
         self.epochs_without_improvement = 0
@@ -331,6 +342,16 @@ class Trainer:
                     self.aug_scale_low, self.aug_scale_high
                 )
                 features = features * scale
+
+            # Mixup: interpolate pairs within the batch
+            if self.mixup_enabled:
+                anneal_epoch = int(self.epochs * (1 - self.mixup_anneal_off_pct))
+                if self.current_epoch < anneal_epoch and torch.rand(1).item() < self.mixup_prob:
+                    lam = np.random.beta(self.mixup_alpha, self.mixup_alpha)
+                    lam = max(lam, 1 - lam)  # keep lam >= 0.5 so first sample dominates
+                    shuffle_idx = torch.randperm(features.shape[0], device=self.device)
+                    features = lam * features + (1 - lam) * features[shuffle_idx]
+                    targets = lam * targets + (1 - lam) * targets[shuffle_idx]
 
             if self.tbptt_enabled:
                 # Truncated BPTT: process sequence in chunks
@@ -581,6 +602,7 @@ class Trainer:
             if hasattr(self.loss_fn, 'set_epoch'):
                 self.loss_fn.set_epoch(epoch)
 
+            self.current_epoch = epoch
             train_loss = self.train_epoch()
             history['train_loss'].append(train_loss)
 
