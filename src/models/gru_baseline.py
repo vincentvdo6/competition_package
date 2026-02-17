@@ -112,6 +112,13 @@ class GRUBaseline(BaseModel):
             self.aux_sign_t0 = nn.Linear(self.hidden_size, 1)
             self.aux_sign_t1 = nn.Linear(self.hidden_size, 1)
 
+        # Innovation auxiliary head: predict t1 residual (t1_t - phi*t1_{t-1})
+        self.has_innovation_aux = model_cfg.get('innovation_aux', False)
+        if self.has_innovation_aux:
+            self.innovation_head = nn.Linear(self.hidden_size, 1)
+            # Learnable AR(1) coefficient for innovation target, init at empirical value
+            self.phi = nn.Parameter(torch.tensor(0.976))
+
         # Chrono initialization for GRU gates (biases update gate toward persistence)
         # Only applicable to GRU — LSTM has different gate structure
         if model_cfg.get('chrono_init', False) and self.rnn_type == 'gru':
@@ -190,6 +197,12 @@ class GRUBaseline(BaseModel):
                 'delta': self.aux_delta(rnn_out),
                 'sign_t0': self.aux_sign_t0(rnn_out),
                 'sign_t1': self.aux_sign_t1(rnn_out),
+            }
+            return predictions, new_hidden, aux
+
+        if return_aux and self.has_innovation_aux:
+            aux = {
+                'innovation': self.innovation_head(rnn_out),  # (batch, seq, 1)
             }
             return predictions, new_hidden, aux
 

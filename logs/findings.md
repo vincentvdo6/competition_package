@@ -362,3 +362,106 @@
 - Include seed 43 in candidate pool
 - Run attention Pearson (Cell 4) on Kaggle
 - Await attention clean seeds 45/46 results and gru5_attn3_uniform8 LB score
+
+---
+
+## [2026-02-14] BREAKTHROUGH: Parity Audit — Vanilla GRU Paradigm
+
+**Source**: Parity testing of official baseline vs our complex pipeline
+
+### The Discovery
+- **Official baseline**: h=64 3L plain GRU, raw 32 features, no normalization. Val=0.2595, LB=**0.2761** (gap **+0.017**)
+- **Our baseline_match**: same h=64 3L + input_proj+LayerNorm+MLP+derived+zscore. Val=0.2738, LB=**0.2394** (gap **-0.034**)
+- **The entire -0.034 gap is from architectural complexity, not data or training**
+
+### Parity v1 Config
+Plain GRU + linear output, raw 32 features, no normalization, MSE loss, dropout=0:
+- Mean val: **0.2692** across seeds
+- **Seed 43 LB: 0.2814** (val 0.2737, gap +0.0077). **NEW PB at the time.**
+
+### Key Insight
+**Simplicity IS the regularization.** The test set is EASIER than validation for simple models. Complex models overfit to training-specific patterns that don't transfer.
+
+---
+
+## [2026-02-14-15] Vanilla GRU Scaling & Ensemble
+
+### Scaling Results (ALL KILLED)
+| Config | Mean Val | Delta vs h=64 |
+|--------|---------|---------------|
+| h=64, 3L (base) | 0.2692 | baseline |
+| h=128, 3L | 0.2676 | -0.0016 |
+| h=144, 3L | 0.2663 | -0.0029 |
+| h=192, 3L | 0.2672 | -0.0020 |
+| h=192, 2L | 0.2655 | -0.0037 |
+
+**h=64 IS the sweet spot.** Larger models are strictly worse even on validation.
+
+### Mass Seed Training (23 seeds: s42-s64)
+- Val range: 0.2624 to 0.2737
+- Mean: 0.2689, Top-10 mean: 0.2704
+
+### Ensemble LB Results
+| Ensemble | Val | LB | Gap |
+|----------|-----|-----|-----|
+| Single s43 | 0.2737 | 0.2814 | +0.0077 |
+| Single s59 | 0.2727 | 0.2764 | +0.0037 |
+| **10-model flat avg** | **0.2708** | **0.2885** | **+0.0177** |
+| 20-model ONNX | ~0.2710 | 0.2884 | — |
+
+**10-model ensemble = 0.2885 LB, Rank 73/4728.** 20 models gave no improvement.
+
+---
+
+## [2026-02-15-16] Diversity Strategies — ALL KILLED
+
+### Recipe Diversity
+| Variant | Mean Val | Correlation with base |
+|---------|---------|----------------------|
+| Base (MSE, LR=1e-3, WD=0, drop=0) | 0.2689 | 1.000 |
+| varA (LR=5e-4, WD=1e-5, drop=0.05) | 0.2662 | 0.942 |
+| varB (LR=2e-3, cosine) | 0.2663 | 0.943 |
+| varC (Huber delta=1.0) | 0.2438 | CATASTROPHIC |
+
+**Prediction correlation 0.94+ — no meaningful diversity.** varC catastrophic.
+
+### LSTM Diversity
+- Mean val: 0.2576 (-0.011 vs GRU). Seeds: 0.2636, 0.2588, 0.2584, 0.2580, 0.2493
+- **KILLED** — too weak for ensemble inclusion
+
+### Checkpoint Diversity
+- Near-peak epochs: corr 0.97 with best (useless)
+- Early epochs: corr 0.87 but val -0.014 (too weak)
+- Within-seed smoothing: +0.0005 (not worth complexity)
+
+### Greedy Ensemble Selection
+- **greedy_top5_onnx**: val 0.2802 but LB **0.2862** (WORSE than flat-10's 0.2885)
+- **greedy_top3_onnx**: val 0.2830 but LB **0.2856** (even WORSE)
+- **Greedy val-optimization HURTS LB.** Positive gap is from averaging, not selection.
+
+### Pearson Blend Loss Diversity
+- Trained vanilla GRU with 70% MSE + 30% Pearson loss
+- **Genuine diversity achieved**: pred correlation 0.78 with base (vs 0.94 base-base)
+- **mixed_ens11_onnx** (10 base + 1 blend): LB **0.2868** — BELOW PB 0.2885
+- **Diversity is real but in the WRONG DIRECTION.** Different predictions != better predictions.
+
+### Bagging (85% data subsets)
+- Prediction correlation 0.945 vs base 0.948 — negligible diversity gain
+
+---
+
+## [2026-02-16] Strategic Dead End — All Approaches Exhausted
+
+All Codex-agreed strategies have been tested and killed. The ceiling at 0.2885 appears to be a fundamental limit of our current approach (vanilla GRU h=64 + flat ensemble averaging).
+
+### Codex's 7 New Ideas (untested)
+1. Regime-gated experts (different data regimes)
+2. Adversarial-validation density-ratio weighting
+3. Mega-teacher distillation (40-100 models -> 1-2 students)
+4. Tree model blend (LightGBM/CatBoost)
+5. Prediction neutralization (post-processing)
+6. Variance-penalized stacking
+7. Chunk-wise inference calibration
+
+### Gemini Context Package Created
+Comprehensive context in `gemini_context/` for external strategic consultation. Awaiting Gemini analysis for fundamentally new directions.

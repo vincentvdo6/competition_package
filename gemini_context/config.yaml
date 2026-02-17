@@ -1,0 +1,39 @@
+# WINNING CONFIG: Vanilla GRU h=64, raw 32 features, MSE loss
+# This is the ONLY config that produces positive val-to-LB gap.
+# All modifications to this recipe (features, normalization, loss, larger hidden) HURT.
+
+model:
+  type: gru
+  input_size: 32        # raw features only, NO derived features
+  hidden_size: 64       # SWEET SPOT - 128/144/192 all worse
+  num_layers: 3
+  dropout: 0.0          # no dropout
+  output_size: 2
+  vanilla: true         # NO input_proj, NO LayerNorm, NO input_dropout
+  output_type: linear   # NO MLP output head
+
+training:
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.0     # no weight decay
+  epochs: 50
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 12
+  loss: mse             # plain MSE - Huber/Pearson/Combined all HURT
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 5
+    min_lr: 1e-6
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: false       # NO z-score normalization
+  derived_features: false # NO derived features
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]

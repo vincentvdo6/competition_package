@@ -161,6 +161,16 @@ class Trainer:
         else:
             self.loss_fn = loss_fn.to(device)
 
+        # Innovation auxiliary loss (multi-task: primary raw + aux innovation)
+        self.use_innovation_aux = (
+            hasattr(model, 'has_innovation_aux') and model.has_innovation_aux
+        )
+        if self.use_innovation_aux:
+            self.innovation_beta = float(
+                config.get('training', {}).get('innovation_beta', 0.3)
+            )
+            print(f"Innovation aux: beta={self.innovation_beta}", flush=True)
+
         # Training parameters
         train_cfg = config.get('training', {})
         self.epochs = int(train_cfg.get('epochs', 50))
@@ -423,6 +433,28 @@ class Trainer:
                         loss = self.loss_fn(predictions, targets, mask,
                                             temporal_weights=self.temporal_weights,
                                             aux_predictions=aux)
+                    elif self.use_innovation_aux:
+                        predictions, _, aux = self.model(features, return_aux=True)
+                        primary_loss = self.loss_fn(predictions, targets, mask)
+
+                        # Innovation target: t1_t - phi * t1_{t-1}
+                        t1_targets = targets[:, :, 1]  # (batch, seq_len)
+                        t1_shifted = torch.zeros_like(t1_targets)
+                        t1_shifted[:, 1:] = t1_targets[:, :-1]
+                        innovation_target = t1_targets - self.model.phi * t1_shifted
+
+                        innovation_pred = aux['innovation'].squeeze(-1)
+
+                        if mask is not None:
+                            inno_loss = torch.nn.functional.mse_loss(
+                                innovation_pred[mask], innovation_target[mask]
+                            )
+                        else:
+                            inno_loss = torch.nn.functional.mse_loss(
+                                innovation_pred, innovation_target
+                            )
+
+                        loss = primary_loss + self.innovation_beta * inno_loss
                     else:
                         predictions, _ = self.model(features)
                         if self.temporal_weights is not None:

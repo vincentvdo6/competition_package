@@ -1,0 +1,44 @@
+Validation Set Statistics
+========================
+Shape: (1,444,000, 37) = 1,444 sequences x 1000 steps each
+Columns: seq_ix, step_in_seq, need_prediction, p0-p11, v0-v11, dp0-dp3, dv0-dv3, t0, t1
+
+Feature Groups:
+- p0-p5: Bid prices (6 levels)
+- p6-p11: Ask prices (6 levels)
+- v0-v5: Bid volumes (6 levels)
+- v6-v11: Ask volumes (6 levels)
+- dp0-dp3: Trade price changes (4 features)
+- dv0-dv3: Trade volume changes (4 features)
+
+ALL features are pre-scaled to approximately [-5.2, 5.2] (NOT raw prices/volumes).
+
+=== Feature Ranges (key features) ===
+p0:  [0.83, 5.20], mean=1.87, std=0.66  (best bid price)
+p6:  [0.83, 5.20], mean=1.94, std=0.64  (best ask price)
+v0:  [-3.71, 4.00], mean=0.69, std=0.76  (best bid volume)
+v6:  [-5.20, 5.20], mean=0.31, std=0.76  (best ask volume)
+dp0: [-5.20, 5.20], mean=-0.02, std=1.55  (trade price change, highest variance)
+dv0: [-5.20, 4.04], mean=-0.27, std=1.06  (trade volume change)
+
+=== Target Statistics ===
+t0: mean=-0.21, std=1.26, range=[-44.0, 39.3]
+t1: mean=-0.06, std=1.98, range=[-36.0, 39.0]
+
+t1 has ~1.6x the std of t0 and much heavier tails.
+Targets are moderately correlated: corr(t0,t1) ~= 0.44-0.51
+
+=== Target Autocorrelation (within sequences) ===
+t0: lag-1 = 0.715 (moderate)
+t1: lag-1 = 0.976 (very high — t1 is highly persistent)
+
+=== Train-Validation Distribution Shift ===
+Material shift in price features (KS stat up to 0.33 for p6, p0, p7, p1, p3).
+Volume and trade features show less shift.
+This shift explains why models that overfit to training patterns fail on validation/test.
+
+=== Per-Sequence Variation ===
+Price features have HIGH per-sequence variation (CoV 0.40-0.61).
+Volume features have moderate variation (CoV 0.07-0.37).
+Per-sequence STDs vary hugely (e.g., dp0: 0.60-2.74, 4x variation).
+Despite this variation, per-sequence normalization (RevIN) HURTS — GRU handles it internally.

@@ -1,0 +1,53 @@
+# Innovation Modeling: vanilla GRU h=64 + auxiliary innovation head for t1
+#
+# Same architecture as gru_parity_v1 (vanilla GRU, raw32, MSE, no norm)
+# PLUS an auxiliary head that predicts t1 innovation: t1_t - phi * t1_{t-1}
+# where phi is a learnable AR(1) coefficient initialized at 0.976.
+#
+# At inference, ONLY the primary head is used. The innovation head is purely
+# a training regularizer that forces the GRU to learn the genuine t1 signal
+# (2.4% of variance) rather than just copying the previous value.
+#
+# Kill test: 3 seeds (s42, s43, s44). Compare val t1 vs base parity_v1.
+
+model:
+  type: gru
+  input_size: 32
+  hidden_size: 64
+  num_layers: 3
+  dropout: 0.0
+  output_size: 2
+  vanilla: true
+  output_type: linear
+  innovation_aux: true
+
+training:
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.0
+  epochs: 50
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 12
+  loss: mse
+  use_amp: true
+  innovation_beta: 0.3
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 5
+    min_lr: 1e-6
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: false
+  derived_features: false
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5

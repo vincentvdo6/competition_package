@@ -97,28 +97,34 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 
 ---
 
-## Current State (as of 2026-02-15)
+## Current State (as of 2026-02-16)
 
-### BREAKTHROUGH: Vanilla GRU Paradigm (Feb 14-15)
+### Vanilla GRU Paradigm (Feb 14) + ALL Diversity Exhausted (Feb 16)
 - **Parity audit** revealed: our complex pipeline (input_proj+LayerNorm+MLP+derived+zscore) HURTS generalization
 - **Vanilla GRU** (plain GRU + linear output, raw 32 features, no norm, MSE loss) has POSITIVE val-to-LB gap
 - **Current best**: vanilla_ens10 = **0.2885 LB, Rank 73/4728** (PAST TOP 100!)
+- **ALL diversity/modification strategies exhausted** — need fundamentally new approaches
 
-### Key LB Scores
+### Key LB Scores (43 submissions total)
 | Submission | Score | Duration | Gap | Notes |
 |-----------|-------|----------|-----|-------|
-| **vanilla_ens10** | **0.2885** | 1702s | +0.0177 | 10 vanilla h=64 models, PyTorch |
+| **vanilla_ens10** | **0.2885** | 1702s | +0.0177 | 10 vanilla h=64 models, PyTorch, **PB** |
 | vanilla_ens20_onnx | 0.2884 | 841s | — | 20 models ONNX, no improvement over 10 |
+| mixed_ens11_onnx | 0.2868 | 465s | — | 10 base + 1 Pearson blend, WORSE |
+| greedy_top5_onnx | 0.2862 | 219s | — | 5 greedy-selected, WORSE |
+| greedy_top3_onnx | 0.2856 | 135s | — | 3 greedy-selected, WORSE |
 | parity_v1_s43 | 0.2814 | 184s | +0.0077 | Single vanilla h=64 |
 | vanilla_s59 | 0.2764 | 380s | +0.0037 | Single vanilla h=64 |
 | Official baseline | 0.2761 | 501s | +0.017 | h=64 3L plain GRU, ONNX windowed |
 | champion_mixed_tcn_v1 | 0.2689 | 3308s | -0.0125 | OLD champion (complex pipeline) |
+| baseline_match_s42 | 0.2394 | 87s | -0.034 | Complex pipeline, CATASTROPHIC |
 
 ### Val-to-LB Gap Rules
 - **Vanilla GRU**: POSITIVE gap (+0.004 to +0.018) — test set is EASIER than val
 - **Complex pipeline**: NEGATIVE gap (-0.008 to -0.034) — complex models overfit
 - **Ensemble amplifies positive gap**: single +0.0077, 10-model +0.0177
 - **20 models = 10 models**: diminishing returns from same-recipe seeds
+- **Mixing recipes HURTS**: Pearson blend diversity (0.78 corr) scored WORSE on LB
 
 ### Available Vanilla Models (23 seeds, h=64 3L, gru_parity_v1 config)
 - Checkpoints in `logs/vanilla_all/gru_parity_v1_seed*.pt`
@@ -133,26 +139,31 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 
 ---
 
-## Next Steps (Codex-agreed, Feb 15)
+## Strategic Status (Feb 16) — ALL PREVIOUS STRATEGIES EXHAUSTED
 
-### Bottleneck: Model quality/diversity, NOT ensemble size
-20 ONNX models scored 0.2884 (same as 10 PyTorch at 0.2885). More same-recipe seeds don't help.
+### What's been tried and KILLED
+Every diversity and modification strategy has been tested and confirmed negative:
 
-### Priority Order
-| P | Approach | Expected Impact | Status |
-|---|----------|----------------|--------|
-| 1 | **Recipe diversity** — vary LR/WD/dropout/scheduler on h=64 vanilla | High (decorrelated predictions) | TODO |
-| 2 | **Greedy ensemble selection** — forward selection on val predictions | High (better than flat top-K) | TODO |
-| 3 | **Vanilla LSTM** — same simplicity, different inductive bias | Medium (architectural diversity) | TODO |
-| 4 | **Checkpoint diversity** — keep 2-3 late checkpoints per run | Low-Medium (free diversity) | TODO |
+**Architecture**: input_proj, LayerNorm, MLP output, attention, TCN, transformer, CVML, SE-Net gate, LSTM
+**Features**: derived 42, microstructure, lag diffs, z-score, RevIN (full+causal)
+**Loss**: Pearson blend, Huber, PearsonPrimary, aux heads, recency weighting
+**Training**: full-data, stronger reg, SAM, EMA, cosine warmup, Adam, higher LR, bagging
+**Scaling**: h=128/144/192/256 (all worse than h=64)
+**Ensemble diversity**: recipe variants (varA/B/C), LSTM, checkpoint epochs, greedy selection, Pearson blend mixing, 20 models
+**Inference**: windowed (same as step-by-step)
 
-### Specific Recipe Variations to Train
-All h=64, 3L, vanilla+linear, raw32, no norm:
-- **Base (gru_parity_v1)**: LR=0.001, WD=0, dropout=0, MSE, ReduceOnPlateau
-- **Variant A**: LR=0.0005, WD=1e-5, dropout=0.05
-- **Variant B**: LR=0.002, WD=0, dropout=0, CosineAnnealing
-- **Variant C**: LR=0.001, WD=1e-4, dropout=0.1
-- Train 3 seeds each, select by val + diversity (prediction correlation)
+### Codex's 7 New Strategic Ideas (not yet started, need evaluation)
+1. **Regime-gated experts**: Train identical GRUs on different data regimes (volatility/spread/imbalance), use tiny gating model
+2. **Adversarial-validation density-ratio weighting**: Train classifier to detect train-vs-val shift, use as sample weights
+3. **Mega-teacher distillation**: Train 40-100 models offline, distill into 1-2 students
+4. **Tree model blend**: LightGBM/CatBoost on sequence summaries, blend if low correlation with GRU
+5. **Prediction neutralization**: Post-process to remove unstable exposures (regress out nuisance basis)
+6. **Variance-penalized stacking**: Optimize weights by `max(mean_fold_corr - beta * std_fold_corr)`
+7. **Chunk-wise inference calibration**: Per-sequence demeaning/winsorizing at test time
+
+### Awaiting Gemini Deep Research
+- Comprehensive context package created in `gemini_context/` with CONTEXT.md + all source files
+- Asking Gemini for fundamentally new approaches to break past 0.2885
 
 ---
 
@@ -176,16 +187,15 @@ All h=64, 3L, vanilla+linear, raw32, no norm:
 - `src/training/losses.py` — MSE, Combined, Huber, WeightedPearson, PearsonCombined
 - `src/data/dataset.py` — PyTorch Dataset (supports `lag_features` flag, KILLED)
 
-### KILLED Approaches (comprehensive)
-Everything below has been tested and confirmed negative:
-- **Architecture**: input_proj, LayerNorm, MLP output, attention, TCN, transformer, CVML, feature gate
+### KILLED Approaches (comprehensive — ALL tested and confirmed negative)
+- **Architecture**: input_proj, LayerNorm, MLP output, attention, TCN, transformer, CVML, SE-Net gate, LSTM
 - **Features**: derived 42, microstructure, lag diffs, raw32+zscore, raw32 no-norm (with complex arch)
-- **Loss**: PearsonPrimary, aux heads, recency weighting, CVML+CoRe
-- **Training**: full-data, stronger reg, SAM, EMA, cosine warmup, Adam, higher LR
+- **Loss**: PearsonPrimary, Pearson blend, Huber, aux heads, recency weighting, CVML+CoRe
+- **Training**: full-data, stronger reg, SAM, EMA, cosine warmup, Adam, higher LR, bagging (85%)
 - **Normalization**: RevIN (full-seq and causal), z-score removal
 - **Scaling**: h=128/144/192/256 (all worse than h=64 on vanilla)
 - **Inference**: windowed (same as step-by-step on LB)
-- **Ensemble**: 20 models (same as 10 models, diminishing returns)
+- **Ensemble diversity**: 20 models (=10), greedy selection (WORSE), recipe variants (varA/B/C all worse), LSTM (-0.011), checkpoint epochs (useless), Pearson blend mixing (0.78 corr but WRONG direction on LB)
 
 ---
 
