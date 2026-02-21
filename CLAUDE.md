@@ -97,35 +97,57 @@ Codex reads the entire codebase if you let it. Always use these parameters:
 
 ---
 
-## Current State (as of 2026-02-17)
+## Current State (as of 2026-02-21)
 
-### STATUS: RECIPE-LEVEL SATURATION — STUCK IN LOCAL BASIN
-- **Current best**: vanilla_ens10 = **0.2885 LB, Rank 73/4728** (PAST TOP 100!)
-- **Vanilla GRU** (plain GRU + linear output, raw 32 features, no norm, MSE loss) has POSITIVE val-to-LB gap
-- **EVERY modification to vanilla recipe has been tested and killed or neutral** (see full list below)
-- **Gap to top-1 (0.3240) is +0.035** — not a tweak, requires fundamentally different approach
-- **Codex verdict (Feb 17)**: "yes, you're likely stuck in this local basin"
+### STATUS: PER-TARGET EXPLOITATION ACTIVE — NEW PB 0.2886
+- **Current best**: 0.2886 (`recovery_ptarget_t07_t18_w64x15` / `t07_t18_w64x175`) — **Rank ~73/4728**
+- **Active branch**: per-target top-K vanilla ensemble (t0_top7 + t1_top8, seed64 upweighted for t1)
+- **2 submissions remaining** in feb21-b1 batch (`submissions/ready/`)
+- Vanilla GRU has POSITIVE val-to-LB gap; ALL recipe modifications killed or neutral
 
-### Key LB Scores (43 submissions total)
-| Submission | Score | Duration | Gap | Notes |
-|-----------|-------|----------|-----|-------|
-| **vanilla_ens10** | **0.2885** | 1702s | +0.0177 | 10 vanilla h=64 models, PyTorch, **PB** |
-| vanilla_ens20_onnx | 0.2884 | 841s | — | 20 models ONNX, no improvement over 10 |
-| mixed_ens11_onnx | 0.2868 | 465s | — | 10 base + 1 Pearson blend, WORSE |
-| greedy_top5_onnx | 0.2862 | 219s | — | 5 greedy-selected, WORSE |
-| greedy_top3_onnx | 0.2856 | 135s | — | 3 greedy-selected, WORSE |
-| parity_v1_s43 | 0.2814 | 184s | +0.0077 | Single vanilla h=64 |
-| vanilla_s59 | 0.2764 | 380s | +0.0037 | Single vanilla h=64 |
-| Official baseline | 0.2761 | 501s | +0.017 | h=64 3L plain GRU, ONNX windowed |
-| champion_mixed_tcn_v1 | 0.2689 | 3308s | -0.0125 | OLD champion (complex pipeline) |
-| baseline_match_s42 | 0.2394 | 87s | -0.034 | Complex pipeline, CATASTROPHIC |
+### Key LB Scores (~55 submissions total)
+| Submission | Score | Notes |
+|-----------|-------|-------|
+| **t07_t18_w64x15** | **0.2886** | **PB** — t0_top7 + t1_top8, seed64 w=1.5 |
+| t07_t18_w64x175 (feb21-b1) | 0.2886 | Same level |
+| t07_t18_w64x125 (feb21-b1) | 0.2886 | Same level |
+| feb21-b1-t718-w175-s025 | 0.2886 | Same level |
+| recovery_ptarget_t07_t18 | 0.2885 | Matched prior PB, reopened branch |
+| **vanilla_ens10** | **0.2885** | 10 vanilla PyTorch flat avg, prior PB |
+| vanilla_ens20_onnx | 0.2884 | 20 models, no improvement |
+| recovery_ptarget_t05_t17 | 0.2879 | — |
+| recovery_ptarget_t07_t16 | 0.2879 | — |
+| recovery_ptarget_t010_t17 | 0.2878 | — |
+| recovery_ptarget_t07_t17 | 0.2883 | First per-target test |
+| regime_gate_blend44_q20_w10 | 0.2874 | Regime gate, below PB |
+| regime_gate_blend44_q50_w10 | 0.2871 | Regime gate, below PB |
+| mixed_ens11_onnx | 0.2868 | 10 base + 1 Pearson blend |
+| top50_mix_p44_w10_onnx | 0.2866 | Pearson blend 10% |
+| greedy_top5_onnx | 0.2862 | Greedy-selected, WORSE |
+| top50_mix_p44_w20_onnx | 0.2829 | Pearson blend 20% |
+| parity_v1_s43 | 0.2814 | Single vanilla h=64 |
+| top50_mix_p44_w30_onnx | 0.2784 | Pearson blend 30%, monotonic decay |
+| vanilla_s59 | 0.2764 | Single vanilla h=64 |
+| Official baseline | 0.2761 | h=64 3L plain GRU |
+| champion_mixed_tcn_v1 | 0.2689 | OLD complex pipeline |
+| baseline_match_s42 | 0.2394 | Complex pipeline, CATASTROPHIC |
 
 ### Val-to-LB Gap Rules
 - **Vanilla GRU**: POSITIVE gap (+0.004 to +0.018) — test set is EASIER than val
 - **Complex pipeline**: NEGATIVE gap (-0.008 to -0.034) — complex models overfit
 - **Ensemble amplifies positive gap**: single +0.0077, 10-model +0.0177
 - **20 models = 10 models**: diminishing returns from same-recipe seeds
-- **Mixing recipes HURTS**: Pearson blend diversity (0.78 corr) scored WORSE on LB
+- **Mixing recipes HURTS**: Pearson blend LB-confirmed KILLED (3 tests: 0.2866, 0.2829, 0.2784)
+- **Per-target top-K WORKS SLIGHTLY**: t07_t17=0.2883, t07_t18=0.2885, t07_t18_w64x15=0.2886 (new PB)
+
+### Per-Target Ensemble — Active Strategy
+Select top-K seeds **separately** by per-target val score, then blend:
+- `t0_top7` seeds: 50, 63, 59, 55, 43, 46, 57
+- `t1_top8` seeds: same set + seed 64 (upweighted for t1)
+- Different from global greedy (HURTS) — per-target separation is the key
+- Seed 64 upweight on t1: `w=1.5` beats `w=1.0` beats `w=0.5`
+- Decision banding: strong_win ≥+0.0003, soft_win 0 to +0.0003, near_miss -0.0004 to 0, clear_fail ≤-0.0004
+- Two `clear_fail` = kill family
 
 ### Available Vanilla Models (23 seeds, h=64 3L, gru_parity_v1 config)
 - Checkpoints in `logs/vanilla_all/gru_parity_v1_seed*.pt`
@@ -154,11 +176,13 @@ Every diversity and modification strategy has been tested and confirmed negative
 **Inference**: windowed (same as step-by-step)
 **Distribution shift**: adversarial-weighted fine-tune on val-like 30% subset (zero-delta), tree model blend (decorrelated but too weak)
 **Post-processing**: prediction neutralization (signal IS linear, removing it destroys predictions)
+**Pearson-blend LB**: top50_mix_p44 at w10/w20/w30 = 0.2866/0.2829/0.2784 (monotonic decay, KILLED)
+**Regime-gated experts**: warmup AUC=0.917, two LB tests = 0.2874/0.2871 (both below PB, KILLED)
 
 ### Remaining Untried Ideas (Codex, Feb 17)
-1. **Regime-specialist ensemble + test-time gating** — highest EV but mixing has historically hurt
-2. **Self-supervised pretraining** (masked/next-step reconstruction) then fine-tune — genuinely untested
-3. **Massive candidate library (100+) + LB-aware blend** — contradicts our evidence (20=10, greedy=worse)
+1. **Self-supervised pretraining** (masked/next-step reconstruction) then fine-tune — genuinely untested
+2. **T1-only specialist blend via per-target gate** — variants built, not yet scored (feb21-b1 remaining slots)
+3. **Massive candidate library (100+) + LB-aware blend** — contradicts evidence but untested at scale
 
 ---
 
@@ -186,6 +210,11 @@ Every diversity and modification strategy has been tested and confirmed negative
 - `scripts/adversarial_validation.py` — Train/val distribution shift detection (AUC=0.959)
 - `scripts/tree_model_probe.py` — HistGradientBoosting probe + GRU correlation + blend sweep
 - `scripts/create_vallike_subset.py` — Create val-like train subset from adversarial weights
+- `scripts/build_regime_gated_submission.py` — Build ONNX ensemble with warmup-based logistic gate
+- `scripts/submission_decision_engine.py` — Record LB scores, compute deltas, enforce family kill logic
+- `scripts/check_submission_zip.py` — Pre-submit gate: size, solution.py, model files, PredictionModel
+- `AGENTS.md` — Locked operational defaults and banding rules
+- `docs/max_leverage_submission_workflow.md` — Decision-complete runbook
 
 ### KILLED Approaches (comprehensive — ALL tested and confirmed negative)
 - **Architecture**: input_proj, LayerNorm, MLP output, attention, TCN, transformer, CVML, SE-Net gate, LSTM
