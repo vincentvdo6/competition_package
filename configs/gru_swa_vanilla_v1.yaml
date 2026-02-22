@@ -1,0 +1,49 @@
+# SWA Vanilla: vanilla GRU h=64 3L + Stochastic Weight Averaging
+# Hypothesis: SWA finds flatter minima -> better generalization on shifted test data
+# Based on parity_v1 (winning recipe), only adds SWA section
+# SWA starts at epoch 10, trains through epoch 50 with low LR averaging
+# Kill gate: mean val (3 seeds) > 0.2709
+
+model:
+  type: gru
+  input_size: 32
+  hidden_size: 64
+  num_layers: 3
+  dropout: 0.0
+  output_size: 2
+  vanilla: true
+  output_type: linear
+
+training:
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.0
+  epochs: 50
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 20
+  loss: mse
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 5
+    min_lr: 1e-6
+  swa:
+    enabled: true
+    start_epoch: 10
+    lr: 0.0001
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: false
+  derived_features: false
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5

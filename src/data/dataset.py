@@ -49,6 +49,7 @@ class LOBSequenceDataset(Dataset):
         subsample_ratio: float = 1.0,  # Bagging: fraction of sequences to keep (e.g. 0.85)
         warmup_normalize: bool = False,  # Concat warmup-normalized features (steps 0-98 stats)
         warmup_steps: int = 99,  # Number of warmup steps for normalization stats
+        feature_indices: Optional[List[int]] = None,  # Subset of raw 32 features to keep
     ):
         self.derived_features = derived_features
         self.temporal_features = temporal_features and derived_features  # temporal requires derived
@@ -89,6 +90,11 @@ class LOBSequenceDataset(Dataset):
                 features_all[idx] = raw
             targets_all[idx] = group[self.TARGET_COLS].values
             masks_all[idx] = group['need_prediction'].values
+
+        # Feature selection: keep only specified indices from raw 32 features
+        if feature_indices is not None and not derived_features:
+            features_all = features_all[:, :, feature_indices]
+            print(f"  Feature selection: {len(feature_indices)}/{32} features")
 
         # Compute temporal features BEFORE normalization (on raw derived values)
         if self.temporal_features:
@@ -229,6 +235,7 @@ def create_dataloaders(
     revin = False,
     subsample_ratio: float = 1.0,
     warmup_normalize: bool = False,
+    feature_indices: Optional[List[int]] = None,
 ) -> Tuple[DataLoader, DataLoader, Optional[Normalizer]]:
     """Create train and validation dataloaders with shared normalizer.
 
@@ -247,6 +254,7 @@ def create_dataloaders(
         revin=revin,
         subsample_ratio=subsample_ratio,
         warmup_normalize=warmup_normalize,
+        feature_indices=feature_indices,
     )
 
     valid_dataset = LOBSequenceDataset(
@@ -260,6 +268,7 @@ def create_dataloaders(
         lag_features=lag_features,
         revin=revin,
         warmup_normalize=warmup_normalize,
+        feature_indices=feature_indices,
     )
 
     # Wrap train in windowed sampling if requested

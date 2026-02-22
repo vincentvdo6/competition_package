@@ -118,6 +118,8 @@ def main():
     revin = data_cfg.get('revin', False)
     subsample_ratio = float(data_cfg.get('subsample_ratio', 1.0))
     warmup_normalize = data_cfg.get('warmup_normalize', False)
+    feature_indices_raw = data_cfg.get('feature_indices', None)
+    feature_indices = [int(x) for x in feature_indices_raw] if feature_indices_raw else None
     feature_dim = 32
     if derived_features:
         feature_dim += 10
@@ -131,10 +133,13 @@ def main():
         feature_dim += 12
     if warmup_normalize:
         feature_dim *= 2  # concat(raw, warmup_normalized)
+    if feature_indices:
+        feature_dim = len(feature_indices)
     print(
         f"Feature pipeline: derived={derived_features}, temporal={temporal_features}, "
         f"interaction={interaction_features}, microstructure={microstructure_features}, "
-        f"lag={lag_features}, revin={revin}, warmup_norm={warmup_normalize} "
+        f"lag={lag_features}, revin={revin}, warmup_norm={warmup_normalize}, "
+        f"feat_sel={len(feature_indices) if feature_indices else 'all'} "
         f"-> input_size={feature_dim}"
     )
 
@@ -179,6 +184,7 @@ def main():
             revin=revin,
             subsample_ratio=subsample_ratio,
             warmup_normalize=warmup_normalize,
+            feature_indices=feature_indices,
         )
         print(f"Train batches: {len(train_loader)}, Valid batches: {len(valid_loader)}")
 
