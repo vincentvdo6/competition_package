@@ -43,7 +43,7 @@ class OnnxVanillaGRU:
     def run_step(self, x_np, hidden):
         pred, new_hidden = self.sess.run(
             ["prediction", "hidden_out"],
-            {"input": x_np, "hidden_in": hidden},
+            {{"input": x_np, "hidden_in": hidden}},
         )
         return pred[0], new_hidden
 

@@ -465,3 +465,439 @@ All Codex-agreed strategies have been tested and killed. The ceiling at 0.2885 a
 
 ### Gemini Context Package Created
 Comprehensive context in `gemini_context/` for external strategic consultation. Awaiting Gemini analysis for fundamentally new directions.
+
+---
+
+## [2026-02-18] Top-50 Push: Reweighted Pearson-Blend Family (Scored, KILLED)
+
+**Source**: `cache/vanilla_preds`, `submissions/ready/*.zip`, checkpoint fingerprinting of `submissions/ready/vanilla_ens10.zip`
+
+### Verified Baseline Identity
+- Hash-matched the exact `vanilla_ens10` members to:
+  - `gru_parity_v1_seed43, 59, 46, 63, 55, 61, 50, 54, 57, 45`
+- This confirms all comparisons below use the true PB base family (not a proxy subset).
+
+### New Signal
+- `vanilla_pearson_blend_seed44` is both:
+  - **Strong** single model (local val `0.2804`)
+  - **Diverse** vs base10 (prediction correlation `0.762`)
+- Prior failed test `mixed_ens11_onnx` (LB `0.2868`) used only 1/11 uniform blend weight (~9.1%) and likely under-used this direction.
+
+### Local Validation Sweep (base10 + pearson_blend_seed44)
+| Blend Weight on seed44 | Local Val Avg |
+|---|---|
+| 0% (base10) | 0.2790 |
+| 10% | 0.2863 |
+| 20% | 0.2899 |
+| 30% | 0.2911 |
+
+All gains came mainly from higher `t1` correlation while keeping `t0` stable.
+
+### Submission Artifacts Built
+- `submissions/ready/top50_mix_p44_w10_onnx.zip` (10% blend weight)
+- `submissions/ready/top50_mix_p44_w20_onnx.zip` (20% blend weight)
+- `submissions/ready/top50_mix_p44_w30_onnx.zip` (30% blend weight)
+
+All are ONNX, ~2.8MB each, estimated server runtime ~814s (large safety margin under 4200s).
+
+### Leaderboard Results
+| Submission | LB Score | Delta vs PB (0.2885) |
+|---|---:|---:|
+| `top50_mix_p44_w10_onnx.zip` | 0.2866 | -0.0019 |
+| `top50_mix_p44_w20_onnx.zip` | 0.2829 | -0.0056 |
+| `top50_mix_p44_w30_onnx.zip` | 0.2784 | -0.0101 |
+
+### Verdict
+- Strongly confirms prior pattern: Pearson-blend diversity remains in the wrong LB direction.
+- Monotonic decay with higher blend weight indicates this family should be treated as **KILLED** for further LB submissions.
+
+---
+
+## [2026-02-18] Regime-Gated Experts — Infrastructure Built, LB Pending
+
+**Source**: `scripts/build_regime_gated_submission.py`, `logs/regime_gate_warm99_logreg.json`
+
+### What Was Implemented
+- Added `scripts/build_regime_gated_submission.py`:
+  - Exports ONNX models for a **base ensemble** and **specialist ensemble**
+  - Fits (or loads) a warmup-only adversarial logistic gate using steps `0..98`
+  - Generates `solution.py` that:
+    - tracks running mean/std/min/max on raw 32 features during warmup
+    - computes `p_val_like` once per sequence
+    - applies piecewise specialist weight (`low` / `high`) by threshold
+    - blends base and specialist predictions per sequence
+
+### Gate Fitting Snapshot
+- Warmup gate (`step_in_seq < 99`) train-vs-valid logistic AUC (in-sample): **0.9175**
+- Valid probability quantiles from saved gate params:
+  - q20: `0.136645`
+  - q50: `0.494322`
+  - q80: `0.883797`
+
+### Candidate Artifacts Built
+- `submissions/ready/regime_gate_blend44_q20_w10_onnx.zip`
+  - threshold `0.136645`, specialist weight `0.10` below threshold else `0.00`
+- `submissions/ready/regime_gate_blend44_q50_w10_onnx.zip`
+  - threshold `0.50`, specialist weight `0.10` below threshold else `0.00`
+
+Both use:
+- Base expert: verified PB `vanilla_ens10` seed set
+- Specialist expert: `vanilla_pearson_blend_seed44`
+- Runtime estimate: ~814s (11 ONNX models), size ~2.83MB
+
+### Additional Observation
+- Finetune specialist (`gru_parity_v1_finetune_seed42/43/44`) showed near-zero gating signal in local gate sweeps and was not selected for these first regime-gated LB tests.
+
+---
+
+## [2026-02-18] Regime-Gated Blend44 v1 Results + Tomorrow Pack Built
+
+### Leaderboard Results (first regime-gated attempts)
+| Submission | LB Score | Delta vs PB (0.2885) |
+|---|---:|---:|
+| `regime_gate_blend44_q20_w10_onnx.zip` | 0.2874 | -0.0011 |
+| `regime_gate_blend44_q50_w10_onnx.zip` | 0.2871 | -0.0014 |
+
+**Verdict**:
+- Sequence gating with **same t0/t1 specialist weight** reduced damage vs static blend but still under PB.
+- This specific formulation is not sufficient.
+
+### New Capability Added
+- Upgraded `scripts/build_regime_gated_submission.py` to support **per-target gate weights**:
+  - independent `(t0, t1)` weights for low and high branches
+  - enables `t1`-only specialist blending while keeping `t0` on stable base ensemble
+
+### Tomorrow Submission Slate (5 zips ready)
+All built in `submissions/ready/`:
+- `tomorrow_t1only_blend44_a008_onnx.zip`
+- `tomorrow_t1only_blend44_a012_onnx.zip`
+- `tomorrow_t1only_blend44_a016_onnx.zip`
+- `tomorrow_t1only_blend44_a022_onnx.zip`
+- `tomorrow_t1only_blend44_a030_onnx.zip`
+
+These are static `t1`-only blends of specialist `vanilla_pearson_blend_seed44`:
+- `t0` weight = 0.0 (always base)
+- `t1` weight = `alpha` in {0.08, 0.12, 0.16, 0.22, 0.30}
+- Base ensemble remains the verified PB 10-seed set.
+
+### Information-Optimized 5-Submission Plan (updated)
+Instead of spending all 5 slots on a single static alpha ladder, use:
+
+1. **Static magnitude probe (low)**: `tomorrow_t1only_blend44_a012_onnx.zip`
+2. **Static magnitude probe (mid/high)**: `tomorrow_t1only_blend44_a022_onnx.zip`
+3. **Static magnitude probe (high)**: `tomorrow_t1only_blend44_a030_onnx.zip`
+4. **Regime-direction probe A**: `tomorrow_t1gate_blend44_q20_l025_h005_onnx.zip`
+5. **Regime-direction probe B**: `tomorrow_t1gate_blend44_q80_l005_h025_onnx.zip`
+
+Rationale:
+- Slots 1–3 estimate the static `t1`-only response curve quickly (slope + saturation).
+- Slots 4–5 hold near-similar average blend mass but flip where specialist weight is applied (low vs high `p_val_like`) to test whether regime assignment has directional value.
+
+---
+
+## [2026-02-20] Next Recovery Slate Built (Per-Target Vanilla GRU, ONNX)
+
+### Latest Live Signal
+Recent per-target submissions establish:
+- `recovery_ptarget_t07_t17_onnx.zip` -> **0.2883** (best in this family, near PB 0.2885)
+- `recovery_ptarget_t010_t17_onnx.zip` -> 0.2878
+- `recovery_ptarget_t05_t13_onnx.zip` -> 0.2868
+
+Interpretation:
+- Adding extra `t0` members beyond top-7 hurt (`t010_t17` < `t07_t17`).
+- Very aggressive `t1` pruning hurt (`t05_t13` < `t07_t17`).
+- Best next EV is a tight neighborhood around `t07_t17`.
+
+### Candidate Selection Method
+- Used cached parity predictions in `cache/vanilla_preds/gru_parity_v1_seed*.npz`.
+- Ranked seeds by per-target weighted Pearson on validation.
+- Ran sequence-level bootstrap robustness around `t07_t17` on nearby `topK_t0/topK_t1` pairs.
+- Prioritized robust neighbors instead of larger architectural changes.
+
+### New Artifacts Built (ready to submit)
+1. `submissions/ready/recovery_ptarget_t05_t17_onnx.zip`
+2. `submissions/ready/recovery_ptarget_t07_t16_onnx.zip`
+3. `submissions/ready/recovery_ptarget_t07_t15_onnx.zip`
+
+All are ONNX vanilla GRU parity-only ensembles and are under 20MB:
+- `recovery_ptarget_t05_t17_onnx.zip` -> 2.57MB
+- `recovery_ptarget_t07_t16_onnx.zip` -> 2.83MB
+- `recovery_ptarget_t07_t15_onnx.zip` -> 2.83MB
+
+### Locked Submission Order
+1. `recovery_ptarget_t05_t17_onnx.zip`
+2. `recovery_ptarget_t07_t16_onnx.zip`
+3. `recovery_ptarget_t07_t15_onnx.zip`
+
+Why this order:
+- Start with highest robustness-sweep EV (`t05_t17`).
+- Then test mild and stronger `t1` trimming while keeping the strong `t0_top7` core fixed.
+
+### Live Update (2026-02-20 17:33)
+- `recovery_ptarget_t05_t17_onnx.zip` scored **0.2879** on public LB.
+- Delta vs PB (`0.2885`): **-0.0006**
+- Delta vs this branch best (`t07_t17 = 0.2883`): **-0.0004**
+
+Interpretation:
+- Reducing `t0` pool to top-5 did not improve over the `t0_top7` branch.
+- Keep focus on `t0_top7` variants for remaining slots (`t07_t16`, then `t07_t15` if needed).
+
+### Live Update (2026-02-20 17:46)
+- `recovery_ptarget_t07_t16_onnx.zip` scored **0.2879** on public LB.
+- Delta vs PB (`0.2885`): **-0.0006**
+- Delta vs branch best (`t07_t17 = 0.2883`): **-0.0004**
+
+Interpretation:
+- Trimming `t1` from 7 to 6 did not help.
+- Current evidence favors `t07_t17` as the local optimum in this family.
+
+### Next Probe Prepared After 17:46 Result
+- Built: `submissions/ready/recovery_ptarget_t07_t18_onnx.zip` (3.34MB)
+- Design:
+  - Keep `t0` fixed at top-7 (`50,63,59,55,43,46,57`)
+  - Increase `t1` from top-7 to top-8 by adding seed `64`
+- Purpose:
+  - After `t07_t16` underperformed, test whether the local optimum is exactly at `t1_top7` or slightly right-shifted.
+
+---
+
+## [2026-02-20] Max-Leverage Workflow Implemented
+
+### What Was Added
+1. `scripts/submission_decision_engine.py`
+   - Records live `zip -> score` updates.
+   - Computes `delta = score - PB`.
+   - Classifies score band:
+     - `strong_win` (`delta >= +0.0003`)
+     - `soft_win` (`0 <= delta < +0.0003`)
+     - `near_miss` (`-0.0004 < delta < 0`)
+     - `clear_fail` (`delta <= -0.0004`)
+   - Enforces family logic:
+     - two `clear_fail` => kill family, with one optional mechanistic final probe.
+   - Persists branch state to `logs/submission_decision_state.json`.
+
+2. `scripts/check_submission_zip.py`
+   - Generic pre-submit gate for all zip formats.
+   - Verifies:
+     - size `<20MB`
+     - `solution.py` at root
+     - model files present
+     - `PredictionModel` class exists
+     - parseable model/weight summary (when literal configs are present)
+
+3. `docs/max_leverage_submission_workflow.md`
+   - Decision-complete runbook with exact commands.
+
+4. `AGENTS.md` update
+   - Locked defaults and banding rules now codified in repo playbook.
+
+### Validation
+- `check_submission_zip.py` PASS on:
+  - `recovery_ptarget_t07_t16_onnx.zip`
+  - `recovery_ptarget_t07_t15_onnx.zip`
+  - `recovery_ptarget_t07_t18_onnx.zip`
+
+### Current Family State (from decision engine)
+- Family: `recovery_ptarget_topk`
+- Recorded:
+  - `recovery_ptarget_t05_t17_onnx.zip` -> `0.2879` (clear_fail)
+  - `recovery_ptarget_t07_t16_onnx.zip` -> `0.2879` (clear_fail)
+- State: `final_probe_only`
+- Next action: `RUN_FINAL_PROBE_ONLY: recovery_ptarget_t07_t18_onnx.zip`
+
+---
+
+## [2026-02-20] Live Docs Audit (wunder-challenge.io) — Source-of-Truth Clarification
+
+### What was checked
+- External docs routes for active challenge `predictorium`:
+  - `/predictorium/docs/submission_guide`
+  - `/predictorium/docs/data_overview`
+  - `/predictorium/docs/rules`
+- Platform bundle metadata confirms active challenge code:
+  - `predictorium` (id `wnn-lob`, status `active`, submissionsLimit `5`)
+  - `wunder_challenge` (id `wnn1`, status `finished`)
+
+### Confirmed constraints for active `predictorium` challenge
+- Submission format: `.zip` with root `solution.py` and `PredictionModel.predict(...)`.
+- Runtime environment: CPU-only, 1 vCPU, 16GB RAM, local SSD, offline/no internet.
+- Docker base image listed: `python:3.11-slim-bookworm`.
+- Time limit (submission guide): **90 minutes**.
+- Data semantics: warm-up first **99 steps** (`0..98`), scored predictions `99..999`.
+
+### Critical inconsistency discovered
+- `predictorium/docs/rules` still contains stale/conflicting resource text:
+  - mentions **2 hours** and **4 cores / 16GB RAM**.
+- `predictorium/docs/submission_guide` gives concrete scorer setup:
+  - **1 vCPU, 16GB RAM, 90 minutes**.
+
+### Decision for project operations
+- Treat `predictorium/docs/submission_guide` + observed live behavior as primary runtime source.
+- Keep conservative runtime budgeting (existing 4200s empirical guard remains useful).
+
+---
+
+## [2026-02-20] Live Result Update — Final Probe Outcome
+
+- Submission: `recovery_ptarget_t07_t18_onnx.zip`
+- Score: `0.2885`
+- PB reference: `0.2885`
+- Delta: `+0.0000`
+- Band: `soft_win`
+
+Decision engine state (`recovery_ptarget_topk`):
+- `status`: `active` (reopened)
+- `final_probe_status`: `used`
+- `next_action`: `REOPEN_BRANCH_TIGHT_SWEEP`
+
+Interpretation:
+- The mechanistic final probe recovered to PB level and re-opened the per-target topK family.
+- Next cycle should run a tight exploit neighborhood around `t07_t18` (small, attributable deltas only).
+
+### Two-slot exploit pack built (same day follow-up)
+With 2 submissions left, avoided widening to new seed sets and built a tight weight bracket around the recovered winner `t07_t18`:
+
+1. `submissions/ready/recovery_ptarget_t07_t18_w64x05_onnx.zip`
+   - Same `t0_top7` and `t1_top8` membership as `t07_t18`
+   - `t1` weight on seed `64` reduced from `1.0` to `0.5`
+
+2. `submissions/ready/recovery_ptarget_t07_t18_w64x15_onnx.zip`
+   - Same membership
+   - `t1` weight on seed `64` increased from `1.0` to `1.5`
+
+Checks:
+- Both zips pass `scripts/check_submission_zip.py`
+- Both sizes: ~3.34MB (<20MB)
+
+Locked submit order for remaining two slots:
+1. `recovery_ptarget_t07_t18_w64x05_onnx.zip`
+2. `recovery_ptarget_t07_t18_w64x15_onnx.zip`
+
+### Live Results (remaining two slots)
+- `recovery_ptarget_t07_t18_w64x15_onnx.zip` -> **0.2886**
+  - Delta vs prior PB (`0.2885`): `+0.0001`
+  - Band: `soft_win`
+- `recovery_ptarget_t07_t18_w64x05_onnx.zip` -> **0.2885**
+  - Delta vs prior PB (`0.2885`): `+0.0000`
+  - Band: `soft_win`
+
+Outcome:
+- New branch best / new PB: **0.2886** from `t07_t18_w64x15`.
+- Directional signal: increasing seed64 weight on `t1` helped; decreasing it did not.
+- Family remains `active`; next action stays `CONTINUE_SMALL_EXPLOIT`.
+
+### Next full slate built (max 5) without further context
+Objective: exploit around new PB winner `t07_t18_w64x15` with small, attributable deltas only.
+
+Built in `submissions/ready/`:
+1. `next_recovery_t07_t18_w64x125_onnx.zip`
+2. `next_recovery_t07_t18_w64x175_onnx.zip`
+3. `next_recovery_t07_t18_w64x150_t61x025_onnx.zip`
+4. `next_recovery_t07_t18_w64x175_t61x025_onnx.zip`
+5. `next_recovery_t07_t18_w64x150_t61x050_onnx.zip`
+
+All pass pre-submit checks:
+- size <20MB
+- root `solution.py`
+- ONNX model files present
+- `PredictionModel` present
+
+Locked submit order for next day:
+1. `next_recovery_t07_t18_w64x125_onnx.zip`
+2. `next_recovery_t07_t18_w64x175_onnx.zip`
+3. `next_recovery_t07_t18_w64x150_t61x025_onnx.zip`
+4. `next_recovery_t07_t18_w64x175_t61x025_onnx.zip`
+5. `next_recovery_t07_t18_w64x150_t61x050_onnx.zip`
+
+---
+
+## [2026-02-20] Operational Hygiene Lock
+
+- Added persistent directive to `AGENTS.md` and `memory/MEMORY.md`:
+  - clear `submissions/ready/` at end of every chat by archiving to
+    `submissions/archive/unsent/cleanup_<timestamp>/`
+  - keep logs/decision state up to date each chat
+- Applied immediately:
+  - moved 10 items from `submissions/ready/` to
+    `submissions/archive/unsent/cleanup_2026-02-20_170541/`
+  - `submissions/ready/` is now empty
+
+## [2026-02-21] Submission Naming Cleanup (Short Format)
+
+Standardized `submissions/ready/` zip names to reduce operator error and improve tracking.
+
+New format (locked):
+- `dMMDD-b<batch>-<family>-<variant>-ox.zip`
+
+Old -> New mapping for active batch:
+- `next_recovery_t07_t18_w64x125_onnx.zip` -> `d0221-b1-pt7t18-w64125-ox.zip`
+- `next_recovery_t07_t18_w64x175_onnx.zip` -> `d0221-b1-pt7t18-w64175-ox.zip`
+- `next_recovery_t07_t18_w64x150_t61x025_onnx.zip` -> `d0221-b1-pt7t18-w64150-s61025-ox.zip`
+- `next_recovery_t07_t18_w64x175_t61x025_onnx.zip` -> `d0221-b1-pt7t18-w64175-s61025-ox.zip`
+- `next_recovery_t07_t18_w64x150_t61x050_onnx.zip` -> `d0221-b1-pt7t18-w64150-s61050-ox.zip`
+
+Submit order preserved:
+1. `d0221-b1-pt7t18-w64125-ox.zip`
+2. `d0221-b1-pt7t18-w64175-ox.zip`
+3. conditional third based on winner of #1/#2:
+   - if `w64175 >= w64125`: `d0221-b1-pt7t18-w64175-s61025-ox.zip`
+   - else: `d0221-b1-pt7t18-w64150-s61025-ox.zip`
+
+## [2026-02-21] Live Result Update (Batch d0221-b1)
+
+User-reported platform scores:
+- `next_recovery_t07_t18_w64x175_onnx.zip` -> `0.2886`
+- `next_recovery_t07_t18_w64x125_onnx.zip` -> `0.2886`
+
+Mapped short names:
+- `d0221-b1-pt7t18-w64175-ox.zip` -> `0.2886`
+- `d0221-b1-pt7t18-w64125-ox.zip` -> `0.2886`
+
+Decision engine (PB `0.2886`):
+- both are `soft_win` (`delta +0.0000`)
+- branch state remains `active`
+- next action: `CONTINUE_SMALL_EXPLOIT`
+
+Action taken:
+- archived scored zips to `submissions/archive/scored/d0221_batch1_scored/`
+- kept unscored candidates in `submissions/ready/`
+
+Next submit (third slot in this cycle):
+- `d0221-b1-pt7t18-w64175-s61025-ox.zip`
+
+## [2026-02-21] Naming Convention Humanized
+
+Updated naming convention to be more readable:
+- new format: `monDD-b<batch>-<family>-<variant>.onnx.zip`
+- example: `feb21-b1-ptarget-t07t18-w64x175-s61x025.onnx.zip`
+
+Renamed active `submissions/ready/` files:
+- `d0221-b1-pt7t18-w64175-s61025-ox.zip` -> `feb21-b1-ptarget-t07t18-w64x175-s61x025.onnx.zip`
+- `d0221-b1-pt7t18-w64150-s61025-ox.zip` -> `feb21-b1-ptarget-t07t18-w64x150-s61x025.onnx.zip`
+- `d0221-b1-pt7t18-w64150-s61050-ox.zip` -> `feb21-b1-ptarget-t07t18-w64x150-s61x050.onnx.zip`
+
+## [2026-02-21] Naming Convention Shortened Again (Readable)
+
+Moved to shorter readable format:
+- `monDD-b<batch>-t<ab>-w<nnn>-s<nnn>-onnx.zip`
+- Example: `feb21-b1-t718-w175-s025-onnx.zip`
+
+Rename mapping (active ready files):
+- `feb21-b1-ptarget-t07t18-w64x175-s61x025.onnx.zip` -> `feb21-b1-t718-w175-s025-onnx.zip`
+- `feb21-b1-ptarget-t07t18-w64x150-s61x025.onnx.zip` -> `feb21-b1-t718-w150-s025-onnx.zip`
+- `feb21-b1-ptarget-t07t18-w64x150-s61x050.onnx.zip` -> `feb21-b1-t718-w150-s050-onnx.zip`
+
+Correction note (2026-02-21):
+- previously listed next submit `d0221-b1-pt7t18-w64175-s61025-ox.zip` is now renamed to `feb21-b1-t718-w175-s025-onnx.zip`.
+
+## [2026-02-21] Live Result Update
+
+- `feb21-b1-t718-w175-s025-onnx.zip` -> `0.2886`
+- PB reference: `0.2886`
+- delta: `+0.0000` (`soft_win`)
+- branch state: `active`
+- next action: `CONTINUE_SMALL_EXPLOIT`
+
+Artifact hygiene action:
+- archived scored zip to `submissions/archive/scored/feb21_batch1_scored/`
+- kept remaining unscored candidates in `submissions/ready/`

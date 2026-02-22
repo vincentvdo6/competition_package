@@ -1,0 +1,83 @@
+{
+  "policy": {
+    "pb": 0.2886,
+    "strong_win_margin": 0.0003,
+    "clear_fail_margin": 0.0004
+  },
+  "families": {
+    "recovery_ptarget_topk": {
+      "status": "active",
+      "clear_fail_count": 0,
+      "final_probe_zip": "recovery_ptarget_t07_t18_onnx.zip",
+      "final_probe_status": "used",
+      "history": [
+        {
+          "timestamp": "2026-02-19T18:11:43",
+          "zip": "recovery_ptarget_t05_t17_onnx.zip",
+          "score": 0.2879,
+          "delta": -0.0005999999999999894,
+          "band": "clear_fail",
+          "notes": "live result 2026-02-20 17:33"
+        },
+        {
+          "timestamp": "2026-02-19T18:11:43",
+          "zip": "recovery_ptarget_t07_t16_onnx.zip",
+          "score": 0.2879,
+          "delta": -0.0005999999999999894,
+          "band": "clear_fail",
+          "notes": "live result 2026-02-20 17:46"
+        },
+        {
+          "timestamp": "2026-02-19T18:27:00",
+          "zip": "recovery_ptarget_t07_t18_onnx.zip",
+          "score": 0.2885,
+          "delta": 0.0,
+          "band": "soft_win",
+          "notes": "live result update"
+        },
+        {
+          "timestamp": "2026-02-19T18:48:46",
+          "zip": "recovery_ptarget_t07_t18_w64x15_onnx.zip",
+          "score": 0.2886,
+          "delta": 0.0001000000000000445,
+          "band": "soft_win",
+          "notes": "live result update"
+        },
+        {
+          "timestamp": "2026-02-19T18:48:47",
+          "zip": "recovery_ptarget_t07_t18_w64x05_onnx.zip",
+          "score": 0.2885,
+          "delta": 0.0,
+          "band": "soft_win",
+          "notes": "live result update"
+        },
+        {
+          "timestamp": "2026-02-20T17:34:03",
+          "zip": "d0221-b1-pt7t18-w64125-ox.zip",
+          "score": 0.2886,
+          "delta": 0.0,
+          "band": "soft_win",
+          "notes": "live result 2026-02-21 from platform: next_recovery_t07_t18_w64x125_onnx.zip"
+        },
+        {
+          "timestamp": "2026-02-20T17:34:03",
+          "zip": "d0221-b1-pt7t18-w64175-ox.zip",
+          "score": 0.2886,
+          "delta": 0.0,
+          "band": "soft_win",
+          "notes": "live result 2026-02-21 from platform: next_recovery_t07_t18_w64x175_onnx.zip"
+        },
+        {
+          "timestamp": "2026-02-20T19:08:53",
+          "zip": "feb21-b1-t718-w175-s025-onnx.zip",
+          "score": 0.2886,
+          "delta": 0.0,
+          "band": "soft_win",
+          "notes": "live result 2026-02-21 screenshot"
+        }
+      ],
+      "last_action": "CONTINUE_SMALL_EXPLOIT",
+      "updated_at": "2026-02-20T19:08:53"
+    }
+  }
+}

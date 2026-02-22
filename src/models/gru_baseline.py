@@ -6,6 +6,26 @@ from typing import Dict, Tuple, Optional, Union
 from .base import BaseModel
 
 
+class HighwayLayer(nn.Module):
+    """Highway network layer"""
+    def __init__(self, size, dropout=0.0):
+        super().__init__()
+        self.transform = nn.Sequential(
+            nn.Linear(size, size),
+            nn.Dropout(dropout),
+            nn.ReLU()
+        )
+        self.gate = nn.Sequential(
+            nn.Linear(size, size),
+            nn.Dropout(dropout),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, x):
+        t = self.transform(x)
+        g = self.gate(x)
+        return g * t + (1 - g) * x
+
 class GRUBaseline(BaseModel):
     """Simple GRU model for sequence-to-sequence prediction.
     
@@ -97,6 +117,11 @@ class GRUBaseline(BaseModel):
         output_type = model_cfg.get('output_type', 'mlp')
         if output_type == 'linear':
             self.output_proj = nn.Linear(self.hidden_size, self.output_size)
+        elif output_type == 'highway':
+            self.output_proj = nn.Sequential(
+                HighwayLayer(self.hidden_size, self.dropout),
+                nn.Linear(self.hidden_size, self.output_size)
+            )
         else:
             self.output_proj = nn.Sequential(
                 nn.Linear(self.hidden_size, self.hidden_size // 2),
