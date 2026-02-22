@@ -289,7 +289,8 @@ class PredictionModel:
                 weights_only=False,
             )
             sd = ckpt["model_state_dict"]
-            model = WaveNetNumpy(sd)
+            cfg = ckpt.get("config", {{}}).get("model", {{}})
+            model = WaveNetNumpy(sd, res_scale=cfg.get("res_scale", 0.3))
             self.models.append(model)
             self.buffers.append(model.init_buffers())
             self.weights.append(w)
