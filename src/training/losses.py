@@ -25,6 +25,23 @@ class MaskedMSELoss(nn.Module):
         return torch.nn.functional.mse_loss(predictions, targets)
 
 
+class TargetWeightedMSELoss(nn.Module):
+    """MSE loss with per-target weighting. E.g. [0.9, 0.1] for t0-specialist."""
+
+    def __init__(self, weights):
+        super().__init__()
+        self.register_buffer('weights', torch.tensor(weights, dtype=torch.float32))
+
+    def forward(self, predictions: torch.Tensor, targets: torch.Tensor,
+                mask: Optional[torch.Tensor] = None, **kwargs) -> torch.Tensor:
+        sq_err = (predictions - targets) ** 2  # (B, T, 2)
+        weighted = sq_err * self.weights  # broadcast (2,) over last dim
+        if mask is not None:
+            mask_3d = mask.unsqueeze(-1).expand_as(predictions)
+            return weighted[mask_3d].mean()
+        return weighted.mean()
+
+
 class MaskedHuberLoss(nn.Module):
     """Plain Huber loss with mask support. No amplitude weighting.
 
@@ -87,6 +104,9 @@ def get_loss_function(config: dict) -> nn.Module:
             alpha=alpha, weighted_ratio=ratio, eps=eps,
             target_weights=target_weights,
         )
+    elif loss_type == 'target_weighted_mse':
+        weights = training_cfg.get('target_loss_weights', [0.5, 0.5])
+        loss_fn = TargetWeightedMSELoss(weights)
     elif loss_type == 'pearson_primary':
         alpha = float(training_cfg.get('pearson_primary_alpha', 0.80))
         warmup_alpha = float(training_cfg.get('warmup_alpha', 0.4))
