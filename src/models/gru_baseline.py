@@ -144,6 +144,11 @@ class GRUBaseline(BaseModel):
             # Learnable AR(1) coefficient for innovation target, init at empirical value
             self.phi = nn.Parameter(torch.tensor(0.976))
 
+        # SSL reconstruction head: predict masked input features from GRU hidden state
+        self.has_ssl_head = model_cfg.get('ssl_pretrain', False)
+        if self.has_ssl_head:
+            self.ssl_reconstruction_head = nn.Linear(self.hidden_size, self.input_size)
+
         # Chrono initialization for GRU gates (biases update gate toward persistence)
         # Only applicable to GRU — LSTM has different gate structure
         if model_cfg.get('chrono_init', False) and self.rnn_type == 'gru':
@@ -230,6 +235,9 @@ class GRUBaseline(BaseModel):
                 'innovation': self.innovation_head(rnn_out),  # (batch, seq, 1)
             }
             return predictions, new_hidden, aux
+
+        if return_aux and self.has_ssl_head:
+            return predictions, new_hidden, {'ssl_recon': self.ssl_reconstruction_head(rnn_out)}
 
         return predictions, new_hidden
     
