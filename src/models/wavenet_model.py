@@ -174,23 +174,31 @@ class WaveNetModel(BaseModel):
             # The delayed input is buf[:, :, 0] (oldest in ring buffer)
             delayed = buf[:, :, 0]  # (batch, C)
 
-            # For kernel_size=2 causal conv: output = conv([delayed, current])
-            # We compute this manually for each conv
-            pair = torch.stack([delayed, current], dim=-1)  # (batch, C, 2)
+            # Manual matmul for kernel_size=2 dilated causal conv:
+            # output = W[:,:,0] @ delayed + W[:,:,1] @ current + bias
+            # (Conv1d with dilation>1 on width-2 input is incorrect)
+            fw = block.filter_conv.conv.weight  # (C, C, 2)
+            fb = block.filter_conv.conv.bias     # (C,)
+            f = (delayed @ fw[:, :, 0].T) + (current @ fw[:, :, 1].T) + fb
 
-            f = block.filter_conv.conv(pair).squeeze(-1)  # (batch, C)
-            g = block.gate_conv.conv(pair).squeeze(-1)  # (batch, C)
+            gw = block.gate_conv.conv.weight
+            gb = block.gate_conv.conv.bias
+            g = (delayed @ gw[:, :, 0].T) + (current @ gw[:, :, 1].T) + gb
+
             z = torch.tanh(f) * torch.sigmoid(g)
 
+            # 1x1 convs work fine as matmul
             skip = block.skip_conv(z.unsqueeze(-1)).squeeze(-1)  # (batch, skip_C)
             res = block.res_conv(z.unsqueeze(-1)).squeeze(-1)  # (batch, C)
 
             skip_sum = skip_sum + skip
-            current = current + block.res_scale * res
 
-            # Update ring buffer: shift left, append current
+            # Update ring buffer with INPUT to this block (before residual)
             new_buf = torch.cat([buf[:, :, 1:], current.unsqueeze(-1)], dim=-1)
             new_buffers.append(new_buf)
+
+            # Apply residual to get input for next block
+            current = current + block.res_scale * res
 
         # Output head
         out = skip_sum.unsqueeze(-1)  # (batch, skip_C, 1)
