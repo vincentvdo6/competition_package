@@ -114,6 +114,7 @@ def main():
     lag_features = data_cfg.get('lag_features', False)
     revin = data_cfg.get('revin', False)
     subsample_ratio = float(data_cfg.get('subsample_ratio', 1.0))
+    warmup_normalize = data_cfg.get('warmup_normalize', False)
     feature_dim = 32
     if derived_features:
         feature_dim += 10
@@ -125,10 +126,13 @@ def main():
         feature_dim += 6
     if lag_features:
         feature_dim += 12
+    if warmup_normalize:
+        feature_dim *= 2  # concat(raw, warmup_normalized)
     print(
         f"Feature pipeline: derived={derived_features}, temporal={temporal_features}, "
         f"interaction={interaction_features}, microstructure={microstructure_features}, "
-        f"lag={lag_features}, revin={revin} -> input_size={feature_dim}"
+        f"lag={lag_features}, revin={revin}, warmup_norm={warmup_normalize} "
+        f"-> input_size={feature_dim}"
     )
 
     if args.fulldata:
@@ -171,6 +175,7 @@ def main():
             window_size=window_size,
             revin=revin,
             subsample_ratio=subsample_ratio,
+            warmup_normalize=warmup_normalize,
         )
         print(f"Train batches: {len(train_loader)}, Valid batches: {len(valid_loader)}")
 

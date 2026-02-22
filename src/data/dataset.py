@@ -47,6 +47,8 @@ class LOBSequenceDataset(Dataset):
         lag_features: bool = False,
         revin = False,  # False, True/'full' (full-sequence), or 'causal' (running stats)
         subsample_ratio: float = 1.0,  # Bagging: fraction of sequences to keep (e.g. 0.85)
+        warmup_normalize: bool = False,  # Concat warmup-normalized features (steps 0-98 stats)
+        warmup_steps: int = 99,  # Number of warmup steps for normalization stats
     ):
         self.derived_features = derived_features
         self.temporal_features = temporal_features and derived_features  # temporal requires derived
@@ -109,6 +111,21 @@ class LOBSequenceDataset(Dataset):
         if self.lag_features:
             lags = LagFeatureBuilder.compute_batch(features_all)
             features_all = np.concatenate([features_all, lags], axis=-1)
+
+        # Warmup normalization: per-sequence stats from steps 0-98, concat(raw, normalized)
+        self.warmup_normalize = warmup_normalize
+        if warmup_normalize:
+            n_feat = features_all.shape[-1]
+            warmup_normed = np.zeros_like(features_all)  # (n_seqs, 1000, F)
+            for i in range(n_seqs):
+                warmup = features_all[i, :warmup_steps, :]  # (99, F)
+                mu = warmup.mean(axis=0, keepdims=True)  # (1, F)
+                sd = np.maximum(warmup.std(axis=0, keepdims=True), 0.01)  # (1, F)
+                # Only normalize steps >= warmup_steps (steps 0-98 stay zeros to match inference)
+                warmup_normed[i, warmup_steps:, :] = (
+                    (features_all[i, warmup_steps:, :] - mu) / sd
+                )
+            features_all = np.concatenate([features_all, warmup_normed], axis=-1)
 
         n_features = features_all.shape[-1]
 
@@ -211,6 +228,7 @@ def create_dataloaders(
     window_size: int = 0,
     revin = False,
     subsample_ratio: float = 1.0,
+    warmup_normalize: bool = False,
 ) -> Tuple[DataLoader, DataLoader, Optional[Normalizer]]:
     """Create train and validation dataloaders with shared normalizer.
 
@@ -218,6 +236,7 @@ def create_dataloaders(
         window_size: If >0, wrap train dataset in WindowedDataset (random crops).
                      Validation always uses full sequences for fair comparison.
         subsample_ratio: Fraction of train sequences to keep (bagging). Only applies to train.
+        warmup_normalize: If True, concat warmup-normalized features (steps 0-98 stats).
     """
     train_dataset = LOBSequenceDataset(
         train_path, normalize=normalize, derived_features=derived_features,
@@ -227,6 +246,7 @@ def create_dataloaders(
         lag_features=lag_features,
         revin=revin,
         subsample_ratio=subsample_ratio,
+        warmup_normalize=warmup_normalize,
     )
 
     valid_dataset = LOBSequenceDataset(
@@ -239,6 +259,7 @@ def create_dataloaders(
         microstructure_features=microstructure_features,
         lag_features=lag_features,
         revin=revin,
+        warmup_normalize=warmup_normalize,
     )
 
     # Wrap train in windowed sampling if requested
