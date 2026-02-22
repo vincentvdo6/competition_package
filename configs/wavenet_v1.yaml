@@ -1,0 +1,49 @@
+# WAVENET-LITE MOONSHOT: Dilated causal CNN for LOB prediction
+# Completely different architecture class from GRU — no recurrence.
+# Gated residual blocks with exponential dilations, skip connections.
+# Receptive field = 1024 steps (covers full sequence).
+#
+# Online inference uses ring buffers (one per block).
+# channels=64, skip=96 to stay within GRU's parameter budget.
+#
+# Kill test: 3 seeds (42, 43, 44). Gate: mean val > 0.2709.
+
+model:
+  type: wavenet
+  input_size: 32
+  channels: 64
+  skip_channels: 96
+  kernel_size: 2
+  output_size: 2
+  res_scale: 0.3
+  dilations: [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+
+training:
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.0
+  epochs: 50
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 12
+  loss: mse
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 5
+    min_lr: 1e-6
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: false
+  derived_features: false
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5
