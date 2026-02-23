@@ -203,7 +203,7 @@ def main():
         print(f"\n{'='*60}")
         print(f"Evaluating on original valid.parquet...")
         from src.data.dataset import LOBSequenceDataset
-        from src.evaluation.metrics import compute_weighted_pearson
+        from utils import weighted_pearson_correlation
 
         orig_val = LOBSequenceDataset(
             valid_path,
@@ -242,8 +242,17 @@ def main():
         clip_range = config.get('evaluation', {}).get('clip_range', [-6, 6])
         preds = np.clip(preds, clip_range[0], clip_range[1])
 
-        score = compute_weighted_pearson(preds, targets, masks)
-        print(f"Original val score: {score:.4f}")
+        # Flatten and apply mask
+        preds_flat = preds.reshape(-1, 2)
+        targets_flat = targets.reshape(-1, 2)
+        masks_flat = masks.reshape(-1).astype(bool)
+        scored_preds = preds_flat[masks_flat]
+        scored_targets = targets_flat[masks_flat]
+
+        t0_corr = weighted_pearson_correlation(scored_targets[:, 0], scored_preds[:, 0])
+        t1_corr = weighted_pearson_correlation(scored_targets[:, 1], scored_preds[:, 1])
+        score = (t0_corr + t1_corr) / 2
+        print(f"Original val: t0={t0_corr:.4f}, t1={t1_corr:.4f}, avg={score:.4f}")
         print(f"{'='*60}")
 
 
