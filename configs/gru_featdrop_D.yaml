@@ -1,0 +1,47 @@
+# Feature Drop D: Drop deepest 2 levels on BOTH sides -> 24 features
+# Correct bid/ask layout: p0-p5=bid, p6-p11=ask, v0-v5=bid vol, v6-v11=ask vol
+# Keep: p0-p3 (bid top4), p6-p9 (ask top4), v0-v3 (bid vol top4), v6-v9 (ask vol top4)
+# Keep: dp0-dp3, dv0-dv3 (all trade features)
+# Kill gate: mean val (3 seeds) > 0.2709
+
+model:
+  type: gru
+  input_size: 24
+  hidden_size: 64
+  num_layers: 3
+  dropout: 0.0
+  output_size: 2
+  vanilla: true
+  output_type: linear
+
+training:
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.0
+  epochs: 50
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 12
+  loss: mse
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 5
+    min_lr: 1e-6
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: false
+  derived_features: false
+  # p0-p3 (0-3), p6-p9 (6-9), v0-v3 (12-15), v6-v9 (18-21), dp0-dp3 (24-27), dv0-dv3 (28-31)
+  feature_indices: [0, 1, 2, 3, 6, 7, 8, 9, 12, 13, 14, 15, 18, 19, 20, 21, 24, 25, 26, 27, 28, 29, 30, 31]
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5

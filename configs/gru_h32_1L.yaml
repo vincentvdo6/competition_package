@@ -1,0 +1,43 @@
+# Minimal GRU: h=32, 1 layer — maximum simplicity
+# If h=64 3L beats h=128+, maybe even simpler is better
+# Kill gate: mean val (3 seeds) > 0.2709
+
+model:
+  type: gru
+  input_size: 32
+  hidden_size: 32
+  num_layers: 1
+  dropout: 0.0
+  output_size: 2
+  vanilla: true
+  output_type: linear
+
+training:
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.0
+  epochs: 50
+  batch_size: 192
+  gradient_clip: 1.0
+  early_stopping_patience: 12
+  loss: mse
+  use_amp: true
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 5
+    min_lr: 1e-6
+
+data:
+  train_path: datasets/train.parquet
+  valid_path: datasets/valid.parquet
+  normalize: false
+  derived_features: false
+
+evaluation:
+  clip_predictions: true
+  clip_range: [-6, 6]
+
+logging:
+  log_dir: logs
+  save_every: 5
