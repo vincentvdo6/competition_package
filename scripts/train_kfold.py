@@ -92,6 +92,8 @@ def main():
     parser.add_argument('--n-folds', type=int, default=5, help='Number of folds (default: 5)')
     parser.add_argument('--eval-original-val', action='store_true',
                         help='Also evaluate on original valid.parquet after training')
+    parser.add_argument('--suffix', type=str, default='',
+                        help='Suffix to append to checkpoint name (e.g., _nf7)')
     args = parser.parse_args()
 
     set_seed(args.seed)
@@ -103,7 +105,7 @@ def main():
 
     # Run name includes fold
     config_name = os.path.splitext(os.path.basename(args.config))[0]
-    run_name = f"{config_name}_fold{args.fold}_seed{args.seed}"
+    run_name = f"{config_name}_fold{args.fold}{args.suffix}_seed{args.seed}"
     config.setdefault('logging', {})['checkpoint_prefix'] = run_name
 
     # Device
